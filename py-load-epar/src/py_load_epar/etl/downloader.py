@@ -1,4 +1,5 @@
 import hashlib
+import io
 import logging
 import tempfile
 from pathlib import Path
@@ -35,6 +36,23 @@ def _download_file_to_stream(url: str, file_stream: IO[bytes]) -> None:
     except requests.exceptions.RequestException as e:
         logger.error(f"Failed to download file from {url}: {e}")
         raise
+
+
+def download_file_to_memory(url: str) -> io.BytesIO:
+    """
+    Downloads a file from a URL into an in-memory BytesIO stream.
+
+    Args:
+        url: The URL to download the file from.
+
+    Returns:
+        An io.BytesIO object containing the file content.
+    """
+    memory_file = io.BytesIO()
+    _download_file_to_stream(url, memory_file)
+    memory_file.seek(0)  # Rewind the stream to the beginning for reading
+    logger.info(f"Successfully downloaded file from {url} into memory.")
+    return memory_file
 
 
 def download_excel_file(

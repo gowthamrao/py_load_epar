@@ -14,18 +14,22 @@ def sample_excel_file() -> Path:
     return Path(__file__).parent.parent / "test_data/sample_ema_data.xlsx"
 
 
+import io
+
 from py_load_epar.config import Settings
 
 
-@patch("py_load_epar.etl.extract.download_excel_file")
+@patch("py_load_epar.etl.extract.download_file_to_memory")
 def test_extract_data_parses_excel_correctly(
     mock_download, sample_excel_file: Path
 ):
     """
     Test that extract_data correctly downloads and parses the sample Excel file.
     """
-    # Arrange: Mock the downloader to return the path to our local sample file
-    mock_download.return_value = sample_excel_file
+    # Arrange: Mock the downloader to return an in-memory stream of our local sample file
+    with open(sample_excel_file, "rb") as f:
+        mock_download.return_value = io.BytesIO(f.read())
+
     settings = Settings()  # Create a dummy settings object
 
     # Act: Call the extract_data function and consume the iterator
