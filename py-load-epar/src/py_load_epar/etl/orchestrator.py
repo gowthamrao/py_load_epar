@@ -2,7 +2,7 @@ import datetime
 import logging
 import uuid
 from pathlib import Path
-from typing import Iterator, List, TypeVar
+from typing import Iterator, List, Tuple, TypeVar
 
 from py_load_epar.config import Settings
 from py_load_epar.db.factory import get_db_adapter
@@ -10,7 +10,8 @@ from py_load_epar.db.interfaces import IDatabaseAdapter
 from py_load_epar.etl.downloader import download_document_and_hash
 from py_load_epar.etl.extract import extract_data
 from py_load_epar.etl.transform import transform_and_validate
-from py_load_epar.models import EparDocument, EparIndex
+from py_load_epar.models import EparDocument, EparIndex, EparSubstanceLink
+from py_load_epar.spor_api.client import SporApiClient
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,32 @@ def _batch_iterator(iterator: Iterator[T], batch_size: int) -> Iterator[List[T]]
             batch = []
     if batch:
         yield batch
+
+
+def _process_substance_links(
+    adapter: IDatabaseAdapter, substance_links: List[EparSubstanceLink]
+) -> int:
+    """Bulk loads substance link records into the database."""
+    if not substance_links:
+        return 0
+
+    logger.info(f"Processing {len(substance_links)} substance link records.")
+    target_table = "epar_substance_link"
+
+    # Use DELTA strategy to avoid inserting duplicate links on reruns
+    staging_table = adapter.prepare_load("DELTA", target_table)
+    loaded_count = adapter.bulk_load_batch(
+        iter(substance_links), staging_table, EparSubstanceLink
+    )
+    adapter.finalize(
+        "DELTA",
+        target_table,
+        staging_table,
+        EparSubstanceLink,
+        primary_key_columns=["epar_id", "spor_substance_id"],
+    )
+    logger.info(f"Successfully loaded {loaded_count} substance links.")
+    return loaded_count
 
 
 def _process_documents(
@@ -68,8 +95,7 @@ def _process_documents(
         return 0
 
     # Load the document metadata into the database
-    # For documents, we'll use a FULL load strategy into a staging table
-    # and then merge, to handle potential re-downloads gracefully.
+    # Use DELTA strategy to handle potential re-downloads gracefully.
     target_table = "epar_documents"
     staging_table = adapter.prepare_load("DELTA", target_table)
     loaded_count = adapter.bulk_load_batch(
@@ -94,6 +120,7 @@ def run_etl(settings: Settings) -> None:
     """
     logger.info(f"Starting ETL run with strategy: {settings.etl.load_strategy}")
     adapter = get_db_adapter(settings)
+    spor_client = SporApiClient(settings.spor_api)
 
     try:
         adapter.connect(connection_params=None)
@@ -108,27 +135,34 @@ def run_etl(settings: Settings) -> None:
         # 2. Set up iterators for streaming data
         high_water_mark = None  # TODO: Fetch from database for CDC
         raw_records_iterator = extract_data(settings, high_water_mark)
-        validated_models_iterator = transform_and_validate(raw_records_iterator)
-        batches = _batch_iterator(validated_models_iterator, settings.etl.batch_size)
+        # Pass the SPOR client to the transform function
+        enriched_models_iterator = transform_and_validate(
+            raw_records_iterator, spor_client
+        )
+        batches = _batch_iterator(enriched_models_iterator, settings.etl.batch_size)
 
         # 3. Process data in batches
         total_loaded_count = 0
         doc_path = Path(settings.etl.document_storage_path)
 
         for i, batch in enumerate(batches):
-            logger.info(f"Processing batch {i+1} with {len(batch)} records.")
+            # The batch now contains tuples of (EparIndex, list[EparSubstanceLink])
+            epar_records = [item[0] for item in batch]
+            substance_links = [link for item in batch for link in item[1]]
+
+            logger.info(f"Processing batch {i+1} with {len(epar_records)} records.")
 
             # Load batch into the main staging table
             loaded_count = adapter.bulk_load_batch(
-                data_iterator=iter(batch),
+                data_iterator=iter(epar_records),
                 target_table=main_staging_table,
                 pydantic_model=target_model,
             )
             total_loaded_count += loaded_count
 
-            # Process documents for the current batch immediately
-            logger.info(f"Processing documents for batch {i+1}.")
-            _process_documents(adapter, batch, doc_path)
+            # Process ancillary data for the current batch immediately
+            _process_substance_links(adapter, substance_links)
+            _process_documents(adapter, epar_records, doc_path)
 
         # 4. Finalize the main table load
         logger.info("Finalizing load for epar_index table.")
