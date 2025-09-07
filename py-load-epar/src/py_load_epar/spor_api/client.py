@@ -58,12 +58,34 @@ class SporApiClient:
             logger.error(f"SPOR API authentication failed: {e}")
             raise
 
+    @retry(
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        stop=stop_after_attempt(4),
+        reraise=True,
+    )
+    def _make_request(self, method: str, url: str, **kwargs) -> requests.Response:
+        """
+        Makes an HTTP request with retry logic.
+        Args:
+            method: HTTP method (e.g., 'GET', 'POST').
+            url: The URL for the request.
+            **kwargs: Additional arguments for requests.request.
+        Returns:
+            The requests.Response object.
+        """
+        try:
+            response = self._session.request(method, url, timeout=30, **kwargs)
+            response.raise_for_status()
+            return response
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"Request to {url} failed: {e}. Retrying...")
+            raise
+
     def search_organisation(
         self, name: str
     ) -> Optional[SporOmsOrganisation]:
         """
         Searches for an organisation by name in the SPOR OMS.
-
         Returns the first result if a high-confidence match is found.
         Caches results to avoid redundant API calls.
         """
@@ -75,8 +97,7 @@ class SporApiClient:
         params = {"name": name, "status": "Active", "pageSize": 2}
 
         try:
-            response = self._session.get(search_url, params=params, timeout=30)
-            response.raise_for_status()
+            response = self._make_request("GET", search_url, params=params)
             data = response.json()
 
             # High-confidence match: exactly one result found
@@ -94,13 +115,12 @@ class SporApiClient:
                 return None
 
         except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to search for organisation '{name}': {e}")
+            logger.error(f"Failed to search for organisation '{name}' after retries: {e}")
             return None
 
     def search_substance(self, name: str) -> Optional[SporSmsSubstance]:
         """
         Searches for a substance by name in the SPOR SMS.
-
         Returns the first result if a high-confidence match is found.
         Caches results to avoid redundant API calls.
         """
@@ -112,8 +132,7 @@ class SporApiClient:
         params = {"name": name, "status": "Current", "pageSize": 2}
 
         try:
-            response = self._session.get(search_url, params=params, timeout=30)
-            response.raise_for_status()
+            response = self._make_request("GET", search_url, params=params)
             data = response.json()
 
             if len(data.get("items", [])) == 1:
@@ -130,5 +149,5 @@ class SporApiClient:
                 return None
 
         except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to search for substance '{name}': {e}")
+            logger.error(f"Failed to search for substance '{name}' after retries: {e}")
             return None
