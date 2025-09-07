@@ -2,25 +2,29 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from py_load_epar.etl.orchestrator import run_etl
 from py_load_epar.config import Settings
+from py_load_epar.etl.orchestrator import run_etl
 
 
-@patch('py_load_epar.etl.orchestrator.get_db_adapter')
-@patch('py_load_epar.etl.orchestrator.extract_data')
-@patch('py_load_epar.etl.orchestrator.transform_and_validate')
+@patch("py_load_epar.etl.orchestrator.get_db_adapter")
+@patch("py_load_epar.etl.orchestrator.extract_data")
+@patch("py_load_epar.etl.orchestrator.transform_and_validate")
 def test_run_etl_successful_flow(mock_transform, mock_extract, mock_get_adapter):
     """
     Test the happy path of the ETL orchestrator.
-    Ensures all components are called in the correct order and the transaction is finalized.
+
+    Ensures all components are called in the correct order and the transaction
+    is finalized.
     """
     # Arrange
     settings = Settings()
     mock_adapter = MagicMock()
     mock_get_adapter.return_value = mock_adapter
 
-    mock_extract.return_value = iter([{'id': 1}])
-    mock_transform.return_value = iter([MagicMock(), MagicMock()]) # 2 records in 1 batch
+    mock_extract.return_value = iter([{"id": 1}])
+    mock_transform.return_value = iter(
+        [MagicMock(), MagicMock()]
+    )  # 2 records in 1 batch
 
     # Act
     run_etl(settings)
@@ -33,8 +37,7 @@ def test_run_etl_successful_flow(mock_transform, mock_extract, mock_get_adapter)
     mock_transform.assert_called_once()
 
     mock_adapter.prepare_load.assert_called_once_with(
-        load_strategy=settings.etl.load_strategy,
-        target_table="epar_index"
+        load_strategy=settings.etl.load_strategy, target_table="epar_index"
     )
     mock_adapter.bulk_load_batch.assert_called_once()
     mock_adapter.finalize.assert_called_once()
@@ -43,9 +46,9 @@ def test_run_etl_successful_flow(mock_transform, mock_extract, mock_get_adapter)
     mock_adapter.close.assert_called_once()
 
 
-@patch('py_load_epar.etl.orchestrator.get_db_adapter')
-@patch('py_load_epar.etl.orchestrator.extract_data')
-@patch('py_load_epar.etl.orchestrator.transform_and_validate')
+@patch("py_load_epar.etl.orchestrator.get_db_adapter")
+@patch("py_load_epar.etl.orchestrator.extract_data")
+@patch("py_load_epar.etl.orchestrator.transform_and_validate")
 def test_run_etl_rolls_back_on_failure(mock_transform, mock_extract, mock_get_adapter):
     """
     Test that the orchestrator calls rollback() on the adapter when an error occurs.
@@ -59,7 +62,7 @@ def test_run_etl_rolls_back_on_failure(mock_transform, mock_extract, mock_get_ad
     error_message = "DB error"
     mock_adapter.bulk_load_batch.side_effect = Exception(error_message)
 
-    mock_extract.return_value = iter([{'id': 1}])
+    mock_extract.return_value = iter([{"id": 1}])
     mock_transform.return_value = iter([MagicMock()])
 
     # Act & Assert

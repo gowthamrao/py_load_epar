@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Iterator, Dict, Any, Type, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, Iterator, Optional, Type
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -12,7 +12,7 @@ class IDatabaseAdapter(ABC):
     """
 
     @abstractmethod
-    def connect(self, connection_params: Dict[str, Any]) -> None:
+    def connect(self, connection_params: Optional[Dict[str, Any]]) -> None:
         """Establish connection to the target database."""
         pass
 
@@ -34,7 +34,12 @@ class IDatabaseAdapter(ABC):
         pass
 
     @abstractmethod
-    def bulk_load_batch(self, data_iterator: Iterator['BaseModel'], target_table: str, pydantic_model: Type['BaseModel']) -> int:
+    def bulk_load_batch(
+        self,
+        data_iterator: Iterator["BaseModel"],
+        target_table: str,
+        pydantic_model: Type["BaseModel"],
+    ) -> int:
         """
         Execute the native bulk load operation for a batch of data.
 
@@ -49,7 +54,13 @@ class IDatabaseAdapter(ABC):
         pass
 
     @abstractmethod
-    def finalize(self, load_strategy: str, target_table: str, staging_table: str | None = None, pydantic_model: Type['BaseModel'] | None = None) -> None:
+    def finalize(
+        self,
+        load_strategy: str,
+        target_table: str,
+        staging_table: str | None = None,
+        pydantic_model: Type["BaseModel"] | None = None,
+    ) -> None:
         """
         Finalize the load process (e.g., merge staging to target, analyze, commit).
 
@@ -57,11 +68,17 @@ class IDatabaseAdapter(ABC):
             load_strategy: The loading strategy ('FULL' or 'DELTA').
             target_table: The final target table.
             staging_table: The staging table used for the load (if any).
-            pydantic_model: The Pydantic model, required for 'DELTA' loads to build the merge statement.
+            pydantic_model: The Pydantic model, required for 'DELTA' loads to build
+                the merge statement.
         """
         pass
 
     @abstractmethod
     def rollback(self) -> None:
         """Roll back the transaction in case of failure."""
+        pass
+
+    @abstractmethod
+    def close(self) -> None:
+        """Close the database connection."""
         pass

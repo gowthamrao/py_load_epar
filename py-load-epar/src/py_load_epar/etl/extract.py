@@ -1,13 +1,15 @@
 import datetime
 import logging
-from typing import Iterator, Dict, Any
+from typing import Any, Dict, Iterator
 
 from py_load_epar.config import Settings
 
 logger = logging.getLogger(__name__)
 
 
-def extract_data(settings: Settings, high_water_mark: datetime.date | None = None) -> Iterator[Dict[str, Any]]:
+def extract_data(
+    settings: Settings, high_water_mark: datetime.date | None = None
+) -> Iterator[Dict[str, Any]]:
     """
     Extracts EPAR data from the source.
 
@@ -37,7 +39,7 @@ def extract_data(settings: Settings, high_water_mark: datetime.date | None = Non
             "active_substance_raw": "Testsubstance A",
             "marketing_authorization_holder_raw": "Pharma Corp",
             "therapeutic_area": "Testing",
-            "source_url": "http://ema.europa.eu/ema/123456"
+            "source_url": "http://ema.europa.eu/ema/123456",
         },
         {
             "epar_id": "EMA/789012",
@@ -48,7 +50,7 @@ def extract_data(settings: Settings, high_water_mark: datetime.date | None = Non
             "active_substance_raw": "Testsubstance B",
             "marketing_authorization_holder_raw": "Bio Inc",
             "therapeutic_area": "Testing",
-            "source_url": "http://ema.europa.eu/ema/789012"
+            "source_url": "http://ema.europa.eu/ema/789012",
         },
         {
             "epar_id": "EMA/345678",
@@ -60,7 +62,7 @@ def extract_data(settings: Settings, high_water_mark: datetime.date | None = Non
             "marketing_authorization_holder_raw": "Bad Data Ltd",
             "therapeutic_area": "Error Handling",
             "source_url": "http://ema.europa.eu/ema/345678",
-            "some_unexpected_column": "should be ignored"
+            "some_unexpected_column": "should be ignored",
         },
     ]
 
