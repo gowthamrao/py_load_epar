@@ -1,0 +1,49 @@
+[project]
+name = "py-load-epar"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "google-labs-jules[bot]",email = "161369871+google-labs-jules[bot]@users.noreply.github.com"}
+]
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic (>=2.11.7,<3.0.0)",
+    "psycopg2-binary (>=2.9.10,<3.0.0)",
+    "tenacity (>=9.1.2,<10.0.0)",
+    "python-dotenv (>=1.1.1,<2.0.0)",
+    "pyyaml (>=6.0.2,<7.0.0)",
+    "pydantic-settings (>=0.2.0,<1.0.0)"
+]
+
+[tool.poetry]
+packages = [{include = "py_load_epar", from = "src"}]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[project.optional-dependencies]
+dev = [
+    "pytest (>=8.3.2,<9.0.0)",
+    "pytest-cov (>=5.0.0,<6.0.0)",
+    "requests-mock (>=1.12.1,<2.0.0)",
+    "testcontainers (>=4.6.0,<5.0.0)",
+    "black (>=24.4.2,<25.0.0)",
+    "ruff (>=0.5.0,<1.0.0)",
+    "mypy (>=1.10.0,<2.0.0)",
+]
+
+[tool.ruff]
+line-length = 88
+select = ["E", "F", "W", "I", "C90"]
+
+[tool.black]
+line-length = 88
+
+[tool.mypy]
+strict = true
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
