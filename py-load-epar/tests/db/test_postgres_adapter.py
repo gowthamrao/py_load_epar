@@ -1,9 +1,10 @@
 import datetime
-import pytest
-from testcontainers.postgresql import PostgresContainer
 
-from py_load_epar.db.postgres import PostgresAdapter
+import pytest
+from testcontainers.postgres import PostgresContainer
+
 from py_load_epar.config import DatabaseSettings
+from py_load_epar.db.postgres import PostgresAdapter
 from py_load_epar.models import EparIndex
 
 # Mark all tests in this module as integration tests
@@ -29,7 +30,7 @@ def db_settings(postgres_container: PostgresContainer) -> DatabaseSettings:
     )
 
 
-@pytest.fixture(scope="function") # Use function scope to get a clean db for each test
+@pytest.fixture(scope="function")  # Use function scope to get a clean db for each test
 def postgres_adapter(db_settings: DatabaseSettings) -> PostgresAdapter:
     """
     Fixture to create a PostgresAdapter instance connected to a clean test container.
@@ -39,14 +40,17 @@ def postgres_adapter(db_settings: DatabaseSettings) -> PostgresAdapter:
     adapter.connect()
 
     # Create schema for each test function
-    with open("py-load-epar/src/py_load_epar/db/schema.sql") as f:
+    with open("src/py_load_epar/db/schema.sql") as f:
         with adapter.conn.cursor() as cursor:
             cursor.execute(f.read())
     adapter.conn.commit()
 
     yield adapter
 
-    # Teardown: close the connection
+    # Teardown: drop all tables to ensure a clean state for the next test
+    with adapter.conn.cursor() as cursor:
+        cursor.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
+    adapter.conn.commit()
     adapter.close()
 
 
@@ -55,12 +59,16 @@ def sample_data():
     """Fixture to provide sample EparIndex data for testing."""
     return [
         EparIndex(
-            epar_id="EMA/1", medicine_name="TestMed A", authorization_status="Authorised",
-            last_update_date_source=datetime.date(2023, 1, 1)
+            epar_id="EMA/1",
+            medicine_name="TestMed A",
+            authorization_status="Authorised",
+            last_update_date_source=datetime.date(2023, 1, 1),
         ),
         EparIndex(
-            epar_id="EMA/2", medicine_name="TestMed B", authorization_status="Authorised",
-            last_update_date_source=datetime.date(2023, 1, 2)
+            epar_id="EMA/2",
+            medicine_name="TestMed B",
+            authorization_status="Authorised",
+            last_update_date_source=datetime.date(2023, 1, 2),
         ),
     ]
 
@@ -86,7 +94,14 @@ def test_full_load_strategy(postgres_adapter: PostgresAdapter, sample_data):
         assert cursor.fetchone()[0] == 2
 
     # Second load with different data
-    new_data = [EparIndex(epar_id="EMA/3", medicine_name="TestMed C", authorization_status="Withdrawn", last_update_date_source=datetime.date(2023, 2, 1))]
+    new_data = [
+        EparIndex(
+            epar_id="EMA/3",
+            medicine_name="TestMed C",
+            authorization_status="Withdrawn",
+            last_update_date_source=datetime.date(2023, 2, 1),
+        )
+    ]
     postgres_adapter.prepare_load("FULL", target_table)
     postgres_adapter.bulk_load_batch(iter(new_data), target_table, EparIndex)
     postgres_adapter.finalize("FULL", target_table)
@@ -94,14 +109,19 @@ def test_full_load_strategy(postgres_adapter: PostgresAdapter, sample_data):
     with postgres_adapter.conn.cursor() as cursor:
         cursor.execute(f"SELECT COUNT(*) FROM {target_table}")
         assert cursor.fetchone()[0] == 1
-        cursor.execute(f"SELECT medicine_name FROM {target_table} WHERE epar_id = 'EMA/3'")
+        cursor.execute(
+            f"SELECT medicine_name FROM {target_table} WHERE epar_id = 'EMA/3'"
+        )
         assert cursor.fetchone()[0] == "TestMed C"
         cursor.execute(f"SELECT COUNT(*) FROM {target_table} WHERE epar_id = 'EMA/1'")
         assert cursor.fetchone()[0] == 0
 
 
 def test_delta_load_strategy(postgres_adapter: PostgresAdapter, sample_data):
-    """Test the DELTA load strategy, which should insert new and update existing records."""
+    """
+    Test the DELTA load strategy, which should insert new and update existing
+    records.
+    """
     target_table = "epar_index"
 
     # Initial load
@@ -115,8 +135,18 @@ def test_delta_load_strategy(postgres_adapter: PostgresAdapter, sample_data):
 
     # Delta load with one new and one updated record
     delta_data = [
-        EparIndex(epar_id="EMA/2", medicine_name="TestMed B Updated", authorization_status="Authorised", last_update_date_source=datetime.date(2023, 1, 2)), # Update
-        EparIndex(epar_id="EMA/3", medicine_name="TestMed C New", authorization_status="Authorised", last_update_date_source=datetime.date(2023, 2, 1)),     # Insert
+        EparIndex(
+            epar_id="EMA/2",
+            medicine_name="TestMed B Updated",
+            authorization_status="Authorised",
+            last_update_date_source=datetime.date(2023, 1, 2),
+        ),  # Update
+        EparIndex(
+            epar_id="EMA/3",
+            medicine_name="TestMed C New",
+            authorization_status="Authorised",
+            last_update_date_source=datetime.date(2023, 2, 1),
+        ),  # Insert
     ]
     staging_table_2 = postgres_adapter.prepare_load("DELTA", target_table)
     postgres_adapter.bulk_load_batch(iter(delta_data), staging_table_2, EparIndex)
@@ -124,11 +154,16 @@ def test_delta_load_strategy(postgres_adapter: PostgresAdapter, sample_data):
 
     with postgres_adapter.conn.cursor() as cursor:
         cursor.execute(f"SELECT COUNT(*) FROM {target_table}")
-        assert cursor.fetchone()[0] == 3 # 2 initial + 1 new
-        cursor.execute(f"SELECT medicine_name FROM {target_table} WHERE epar_id = 'EMA/2'")
+        assert cursor.fetchone()[0] == 3  # 2 initial + 1 new
+        cursor.execute(
+            f"SELECT medicine_name FROM {target_table} WHERE epar_id = 'EMA/2'"
+        )
         assert cursor.fetchone()[0] == "TestMed B Updated"
-        cursor.execute(f"SELECT medicine_name FROM {target_table} WHERE epar_id = 'EMA/3'")
+        cursor.execute(
+            f"SELECT medicine_name FROM {target_table} WHERE epar_id = 'EMA/3'"
+        )
         assert cursor.fetchone()[0] == "TestMed C New"
+
 
 def test_rollback_on_failure(postgres_adapter: PostgresAdapter, sample_data):
     """Test that the transaction is rolled back if finalize is not called."""

@@ -1,5 +1,5 @@
 import logging
-from typing import Iterator, TypeVar, List
+from typing import Iterator, List, TypeVar
 
 from py_load_epar.config import Settings
 from py_load_epar.db.factory import get_db_adapter
@@ -9,7 +9,7 @@ from py_load_epar.models import EparIndex
 
 logger = logging.getLogger(__name__)
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 
 def _batch_iterator(iterator: Iterator[T], batch_size: int) -> Iterator[List[T]]:
@@ -26,7 +26,7 @@ def _batch_iterator(iterator: Iterator[T], batch_size: int) -> Iterator[List[T]]
         yield batch
 
 
-def run_etl(settings: Settings):
+def run_etl(settings: Settings) -> None:
     """
     Runs the main ETL pipeline.
 
@@ -42,7 +42,7 @@ def run_etl(settings: Settings):
     adapter = get_db_adapter(settings)
 
     try:
-        adapter.connect()
+        adapter.connect(connection_params=None)
 
         # In a real scenario, you'd fetch the high_water_mark from the db
         high_water_mark = None
@@ -51,11 +51,10 @@ def run_etl(settings: Settings):
         validated_models_iterator = transform_and_validate(raw_records_iterator)
 
         target_model = EparIndex
-        target_table = "epar_index" # This could be derived from the model name
+        target_table = "epar_index"  # This could be derived from the model name
 
         staging_table = adapter.prepare_load(
-            load_strategy=settings.etl.load_strategy,
-            target_table=target_table
+            load_strategy=settings.etl.load_strategy, target_table=target_table
         )
 
         total_loaded_count = 0
@@ -66,7 +65,7 @@ def run_etl(settings: Settings):
             loaded_count = adapter.bulk_load_batch(
                 data_iterator=iter(batch),
                 target_table=staging_table,
-                pydantic_model=target_model
+                pydantic_model=target_model,
             )
             total_loaded_count += loaded_count
 
@@ -74,10 +73,10 @@ def run_etl(settings: Settings):
             load_strategy=settings.etl.load_strategy,
             target_table=target_table,
             staging_table=staging_table,
-            pydantic_model=target_model
+            pydantic_model=target_model,
         )
 
-        logger.info(f"ETL run completed successfully. Total records loaded: {total_loaded_count}")
+        logger.info(f"ETL run successful. Total records loaded: {total_loaded_count}")
 
     except Exception as e:
         logger.error(f"ETL run failed: {e}", exc_info=True)
@@ -86,5 +85,5 @@ def run_etl(settings: Settings):
         # Re-raise the exception to indicate failure to the caller
         raise
     finally:
-        if adapter and getattr(adapter, 'close', None):
+        if adapter and getattr(adapter, "close", None):
             adapter.close()

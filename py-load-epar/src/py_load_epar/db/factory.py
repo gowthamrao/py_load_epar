@@ -7,6 +7,7 @@ class DatabaseAdapterFactory:
     """
     Factory for creating database adapter instances based on configuration.
     """
+
     _adapters = {
         "postgresql": PostgresAdapter,
     }
@@ -29,7 +30,9 @@ class DatabaseAdapterFactory:
         adapter_class = DatabaseAdapterFactory._adapters.get(db_type)
 
         if not adapter_class:
-            raise NotImplementedError(f"No adapter implemented for database type: '{db_type}'")
+            raise NotImplementedError(
+                f"No adapter implemented for database type: '{db_type}'"
+            )
 
         return adapter_class(settings.db)
 

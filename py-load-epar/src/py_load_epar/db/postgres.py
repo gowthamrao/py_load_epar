@@ -1,14 +1,13 @@
 import io
 import logging
-from typing import Iterator, Dict, Any, List, Type
+from typing import Any, Dict, Iterator, Type
 
-from psycopg2.extensions import connection as PgConnection
-from psycopg2.extras import DictCursor
 import psycopg2
+from psycopg2.extensions import connection as PgConnection
+from pydantic import BaseModel
 
 from py_load_epar.config import DatabaseSettings
 from py_load_epar.db.interfaces import IDatabaseAdapter
-from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -34,10 +33,15 @@ class PostgresAdapter(IDatabaseAdapter):
             conn_details.update(connection_params)
 
         # The 'type' key is not a valid psycopg2 parameter
-        conn_details.pop('type', None)
+        conn_details.pop("type", None)
 
         try:
-            logger.info(f"Connecting to PostgreSQL database '{self.settings.dbname}' on '{self.settings.host}:{self.settings.port}'.")
+            logger.info(
+                (
+                    f"Connecting to PostgreSQL database '{self.settings.dbname}' on "
+                    f"'{self.settings.host}:{self.settings.port}'."
+                )
+            )
             self.conn = psycopg2.connect(**conn_details)
             self.conn.autocommit = False  # Ensure transactions are managed manually
         except psycopg2.OperationalError as e:
@@ -53,24 +57,40 @@ class PostgresAdapter(IDatabaseAdapter):
             raise ConnectionError("Database connection is not established.")
 
         with self.conn.cursor() as cursor:
-            if load_strategy.upper() == 'FULL':
+            if load_strategy.upper() == "FULL":
                 logger.info(f"FULL load strategy: Truncating table {target_table}.")
-                cursor.execute(f"TRUNCATE TABLE {target_table} RESTART IDENTITY CASCADE;")
+                cursor.execute(
+                    f"TRUNCATE TABLE {target_table} RESTART IDENTITY CASCADE;"
+                )
                 return target_table
 
-            elif load_strategy.upper() == 'DELTA':
+            elif load_strategy.upper() == "DELTA":
                 staging_table = f"staging_{target_table}"
-                logger.info(f"DELTA load strategy: Creating UNLOGGED staging table {staging_table}.")
+                logger.info(
+                    "DELTA load strategy: Creating UNLOGGED staging table "
+                    f"{staging_table}."
+                )
                 cursor.execute(f"DROP TABLE IF EXISTS {staging_table};")
-                cursor.execute(f"CREATE UNLOGGED TABLE {staging_table} (LIKE {target_table} INCLUDING DEFAULTS);")
+                cursor.execute(
+                    (
+                        f"CREATE UNLOGGED TABLE {staging_table} "
+                        f"(LIKE {target_table} INCLUDING DEFAULTS);"
+                    )
+                )
                 return staging_table
 
             else:
                 raise ValueError(f"Unknown load strategy: {load_strategy}")
 
-    def bulk_load_batch(self, data_iterator: Iterator[BaseModel], target_table: str, pydantic_model: Type[BaseModel]) -> int:
+    def bulk_load_batch(
+        self,
+        data_iterator: Iterator[BaseModel],
+        target_table: str,
+        pydantic_model: Type[BaseModel],
+    ) -> int:
         """
-        Execute the native bulk load operation for a batch of data using COPY FROM STDIN.
+        Execute the native bulk load operation for a batch of data using
+        COPY FROM STDIN.
         """
         if not self.conn:
             raise ConnectionError("Database connection is not established.")
@@ -88,18 +108,28 @@ class PostgresAdapter(IDatabaseAdapter):
 
         with self.conn.cursor() as cursor:
             try:
-                cursor.copy_expert(
-                    f"COPY {target_table} ({','.join(columns)}) FROM STDIN WITH (FORMAT text, NULL '\\N')",
-                    string_buffer
+                copy_sql = (
+                    f"COPY {target_table} ({','.join(columns)}) FROM STDIN "
+                    "WITH (FORMAT text, NULL '\\N')"
                 )
-                logger.info(f"Successfully loaded {cursor.rowcount} records into {target_table}.")
-                return cursor.rowcount
+                cursor.copy_expert(copy_sql, string_buffer)
+                logger.info(
+                    f"Successfully loaded {cursor.rowcount} records into "
+                    f"{target_table}."
+                )
+                return int(cursor.rowcount)
             except psycopg2.Error as e:
                 logger.error(f"Bulk load failed: {e}")
                 self.rollback()
                 raise
 
-    def finalize(self, load_strategy: str, target_table: str, staging_table: str | None = None, pydantic_model: Type[BaseModel] | None = None) -> None:
+    def finalize(
+        self,
+        load_strategy: str,
+        target_table: str,
+        staging_table: str | None = None,
+        pydantic_model: Type[BaseModel] | None = None,
+    ) -> None:
         """
         Finalize the load process. For 'DELTA', merges from staging to target.
         Commits the transaction.
@@ -108,11 +138,12 @@ class PostgresAdapter(IDatabaseAdapter):
             raise ConnectionError("Database connection is not established.")
 
         with self.conn.cursor() as cursor:
-            if load_strategy.upper() == 'DELTA' and staging_table and pydantic_model:
+            if load_strategy.upper() == "DELTA" and staging_table and pydantic_model:
                 logger.info(f"Merging data from {staging_table} to {target_table}.")
 
                 columns = list(pydantic_model.model_fields.keys())
-                # Assuming the primary key is the first column for the ON CONFLICT clause
+                # Assuming the primary key is the first column for the ON CONFLICT
+                # clause
                 pk_column = columns[0]
 
                 update_cols = [f"{col} = EXCLUDED.{col}" for col in columns[1:]]
@@ -150,4 +181,9 @@ class PostgresAdapter(IDatabaseAdapter):
             return "\\N"
         value_str = str(value)
         # Escape characters that have special meaning in text format
-        return value_str.replace('\\', '\\\\').replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+        return (
+            value_str.replace("\\", "\\\\")
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+            .replace("\t", "\\t")
+        )

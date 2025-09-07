@@ -1,5 +1,5 @@
 import logging
-from typing import Iterator, Dict, Any
+from typing import Any, Dict, Iterator
 
 from pydantic import ValidationError
 
@@ -8,7 +8,9 @@ from py_load_epar.models import EparIndex
 logger = logging.getLogger(__name__)
 
 
-def transform_and_validate(raw_records: Iterator[Dict[str, Any]]) -> Iterator[EparIndex]:
+def transform_and_validate(
+    raw_records: Iterator[Dict[str, Any]]
+) -> Iterator[EparIndex]:
     """
     Transforms raw data dictionaries into Pydantic models and validates them.
 

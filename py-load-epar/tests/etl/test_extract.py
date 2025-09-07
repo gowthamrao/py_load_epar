@@ -11,7 +11,7 @@ def test_extract_data_returns_all_records_without_hwm():
     settings = MagicMock()
     records = list(extract_data(settings, high_water_mark=None))
     assert len(records) == 3
-    assert records[0]['epar_id'] == "EMA/123456"
+    assert records[0]["epar_id"] == "EMA/123456"
 
 
 def test_extract_data_filters_based_on_hwm():
@@ -26,8 +26,8 @@ def test_extract_data_filters_based_on_hwm():
 
     # Only the records with a later date should be returned
     assert len(records) == 2
-    assert records[0]['epar_id'] == "EMA/789012"
-    assert records[1]['epar_id'] == "EMA/345678"
+    assert records[0]["epar_id"] == "EMA/789012"
+    assert records[1]["epar_id"] == "EMA/345678"
 
 
 def test_extract_data_with_hwm_that_filters_all():
