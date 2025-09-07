@@ -26,11 +26,24 @@ class DatabaseSettings(BaseSettings):
         return f"{self.type}://{self.user}:{self.password}@{self.host}:{self.port}/{self.dbname}"
 
 
+from pydantic import SecretStr
+
+
+class SporApiSettings(BaseSettings):
+    """Models settings for the SPOR API."""
+
+    base_url: str = "https://sporify.eu"  # Using the wrapper for now
+    tenancy_name: str = "default"
+    username: str = "user"
+    password: SecretStr = SecretStr("password")
+
+    model_config = SettingsConfigDict(env_prefix="PY_LOAD_EPAR_SPOR_")
+
+
 class ApiSettings(BaseSettings):
     """Models settings for external APIs."""
 
     ema_base_url: str = "https://www.ema.europa.eu"
-    spor_api_url: str = "https://spor.ema.europa.eu/rmswi/api"
     ema_file_url: str = Field(
         default="https://www.ema.europa.eu/en/documents/report/medicines-output-medicines-report_en.xlsx",
         description="URL to the main EMA EPAR index file (Excel/CSV).",
@@ -56,6 +69,7 @@ class Settings(BaseSettings):
     db: DatabaseSettings = DatabaseSettings()
     api: ApiSettings = ApiSettings()
     etl: EtlSettings = EtlSettings()
+    spor_api: SporApiSettings = SporApiSettings()
 
     # Optional path to a YAML config file
     config_path: Optional[str] = None
@@ -88,6 +102,8 @@ class Settings(BaseSettings):
             self.api = self.api.model_copy(update=yaml_config["api"])
         if "etl" in yaml_config:
             self.etl = self.etl.model_copy(update=yaml_config["etl"])
+        if "spor_api" in yaml_config:
+            self.spor_api = self.spor_api.model_copy(update=yaml_config["spor_api"])
 
     model_config = SettingsConfigDict(env_nested_delimiter="__")
 
