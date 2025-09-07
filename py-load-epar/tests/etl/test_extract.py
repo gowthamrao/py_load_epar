@@ -28,14 +28,17 @@ def test_extract_data_parses_excel_correctly(
     mock_download.return_value = sample_excel_file
     settings = Settings()  # Create a dummy settings object
 
-    # Act: Call the extract_data function and unpack the results
-    records_iterator, new_hwm = extract_data(settings=settings)
+    # Act: Call the extract_data function and consume the iterator
+    records_iterator = extract_data(settings=settings)
     records = list(records_iterator)
 
     # Assert: Check that the data was parsed as expected
     assert len(records) == 2
-    assert new_hwm is not None
-    assert new_hwm.day == 15  # The latest date in the sample file is Feb 15
+
+    # The caller is now responsible for determining the high water mark
+    new_hwm = max(r["last_update_date_source"] for r in records)
+    assert new_hwm.day == 15
+    assert new_hwm.month == 2
 
     # Check the first record
     record1 = records[0]

@@ -136,3 +136,38 @@ def test_search_organisation_is_cached(spor_settings):
 
         # The mock GET should have been called only once
         assert mock_get.call_count == 1
+
+
+def test_search_organisation_retries_on_failure(spor_settings):
+    """
+    Test that the client retries the search request on transient server errors.
+    """
+    client = SporApiClient(spor_settings)
+    org_name = "Retry Pharma"
+    success_response = {
+        "items": [{"orgId": "ORG-RETRY", "name": org_name}]
+    }
+
+    with requests_mock.Mocker() as m:
+        # Mock authentication
+        m.post(
+            f"{spor_settings.base_url}/api/Account",
+            json={"result": {"accessToken": "fake-token"}},
+        )
+
+        search_url = f"{spor_settings.base_url}/api/v1/spor/oms/organisations"
+        # The mock will first respond with a 503 error, then with a 200 OK
+        mock_get = m.get(
+            search_url,
+            [
+                {"status_code": 503, "reason": "Service Unavailable"},
+                {"status_code": 200, "json": success_response},
+            ],
+        )
+
+        result = client.search_organisation(org_name)
+
+        # Assert that the request was tried twice
+        assert mock_get.call_count == 2
+        assert isinstance(result, SporOmsOrganisation)
+        assert result.org_id == "ORG-RETRY"

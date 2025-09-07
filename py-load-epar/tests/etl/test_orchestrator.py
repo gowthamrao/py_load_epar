@@ -1,4 +1,5 @@
 from unittest.mock import MagicMock, patch
+import datetime
 
 import pytest
 from pathlib import Path
@@ -31,14 +32,21 @@ def test_run_etl_successful_flow(
     settings = Settings()
     settings.etl.document_storage_path = "/tmp/docs"
     mock_adapter = MagicMock()
+    mock_adapter.get_latest_high_water_mark.return_value = None
     mock_get_adapter.return_value = mock_adapter
     mock_spor_client_instance = MagicMock(spec=SporApiClient)
     mock_spor_client_class.return_value = mock_spor_client_instance
 
-    mock_extract.return_value = (iter([{"id": 1}]), None)
+    mock_raw_records_iterator = iter([{"id": 1}])
+    mock_extract.return_value = mock_raw_records_iterator
 
     # Simulate two validated records being returned by the transform step
-    epar_records = [MagicMock(spec=EparIndex), MagicMock(spec=EparIndex)]
+    record1 = MagicMock(spec=EparIndex)
+    record1.last_update_date_source = datetime.datetime(2024, 1, 1)
+    record2 = MagicMock(spec=EparIndex)
+    record2.last_update_date_source = datetime.datetime(2024, 1, 2)
+    epar_records = [record1, record2]
+
     substance_links = [MagicMock(spec=EparSubstanceLink)]
     mock_transform.return_value = iter([(epar_records[0], substance_links), (epar_records[1], [])])
     mock_adapter.log_pipeline_start.return_value = 123  # Mock execution_id
@@ -52,7 +60,7 @@ def test_run_etl_successful_flow(
     mock_adapter.connect.assert_called_once()
     mock_extract.assert_called_once()
     mock_transform.assert_called_once_with(
-        mock_extract.return_value[0], mock_spor_client_instance, 123
+        mock_raw_records_iterator, mock_spor_client_instance, 123
     )
     mock_adapter.prepare_load.assert_called_once_with(
         load_strategy=settings.etl.load_strategy, target_table="epar_index"
@@ -85,7 +93,7 @@ def test_run_etl_rolls_back_on_failure(
     mock_adapter = MagicMock()
     mock_get_adapter.return_value = mock_adapter
 
-    mock_extract.return_value = (iter([{}]), None)
+    mock_extract.return_value = iter([{}])
     mock_adapter.log_pipeline_start.return_value = 123
 
     # Simulate a failure during the transform step

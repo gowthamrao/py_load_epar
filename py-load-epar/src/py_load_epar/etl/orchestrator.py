@@ -143,10 +143,12 @@ def run_etl(settings: Settings) -> None:
         if settings.etl.load_strategy.upper() == "DELTA":
             high_water_mark = adapter.get_latest_high_water_mark()
 
-        # The extract function will now return the new high water mark
-        raw_records_iterator, new_high_water_mark = extract_data(
-            settings, high_water_mark
-        )
+        # 3. Set up iterators for streaming data
+        high_water_mark = None
+        if settings.etl.load_strategy.upper() == "DELTA":
+            high_water_mark = adapter.get_latest_high_water_mark()
+
+        raw_records_iterator = extract_data(settings, high_water_mark)
         enriched_models_iterator = transform_and_validate(
             raw_records_iterator, spor_client, execution_id
         )
@@ -155,6 +157,7 @@ def run_etl(settings: Settings) -> None:
         # 4. Process data in batches
         total_loaded_count = 0
         doc_path = Path(settings.etl.document_storage_path)
+        new_high_water_mark = high_water_mark
 
         for i, batch in enumerate(batches):
             epar_records, substance_links = zip(*batch) if batch else ([], [])
@@ -162,6 +165,14 @@ def run_etl(settings: Settings) -> None:
 
             if not epar_records:
                 continue
+
+            # Find the latest date in the current batch to update the HWM
+            for record in epar_records:
+                if (
+                    new_high_water_mark is None
+                    or record.last_update_date_source > new_high_water_mark
+                ):
+                    new_high_water_mark = record.last_update_date_source
 
             # Load batch into the main staging table
             loaded_count = adapter.bulk_load_batch(
