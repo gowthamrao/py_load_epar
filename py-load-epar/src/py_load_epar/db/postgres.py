@@ -1,6 +1,7 @@
+import datetime
 import io
 import logging
-from typing import Any, Dict, Iterator, Type
+from typing import Any, Dict, Iterator, Optional, Type
 
 import psycopg2
 from psycopg2.extensions import connection as PgConnection
@@ -195,3 +196,108 @@ class PostgresAdapter(IDatabaseAdapter):
             .replace("\r", "\\r")
             .replace("\t", "\\t")
         )
+
+    def get_latest_high_water_mark(self) -> Optional[datetime.datetime]:
+        """
+        Retrieves the latest high water mark from the pipeline execution log
+        for successful DELTA runs.
+        """
+        if not self.conn:
+            raise ConnectionError("Database connection is not established.")
+
+        with self.conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT MAX(high_water_mark)
+                FROM pipeline_execution
+                WHERE status = 'SUCCESS' AND load_strategy = 'DELTA'
+                """
+            )
+            result = cursor.fetchone()[0]
+            if result:
+                logger.info(f"Found latest high water mark: {result}")
+                return result
+            logger.info("No previous high water mark found.")
+            return None
+
+    def log_pipeline_start(
+        self, load_strategy: str, source_file_version: Optional[str] = None
+    ) -> int:
+        """
+        Logs the start of a new pipeline execution and returns the execution ID.
+        """
+        if not self.conn:
+            raise ConnectionError("Database connection is not established.")
+
+        with self.conn.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO pipeline_execution
+                    (start_timestamp_utc, status, load_strategy, source_file_version)
+                VALUES
+                    (%s, %s, %s, %s)
+                RETURNING execution_id
+                """,
+                (
+                    datetime.datetime.now(datetime.timezone.utc),
+                    "RUNNING",
+                    load_strategy,
+                    source_file_version,
+                ),
+            )
+            execution_id = cursor.fetchone()[0]
+            self.conn.commit()
+            logger.info(
+                f"Logged pipeline start for execution_id {execution_id} with strategy {load_strategy}."
+            )
+            return execution_id
+
+    def log_pipeline_success(
+        self,
+        execution_id: int,
+        records_processed: int,
+        new_high_water_mark: Optional[datetime.datetime] = None,
+    ) -> None:
+        """Updates the pipeline execution log to mark a run as successful."""
+        if not self.conn:
+            raise ConnectionError("Database connection is not established.")
+
+        with self.conn.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE pipeline_execution
+                SET
+                    end_timestamp_utc = %s,
+                    status = 'SUCCESS',
+                    records_processed = %s,
+                    high_water_mark = %s
+                WHERE execution_id = %s
+                """,
+                (
+                    datetime.datetime.now(datetime.timezone.utc),
+                    records_processed,
+                    new_high_water_mark,
+                    execution_id,
+                ),
+            )
+            self.conn.commit()
+            logger.info(f"Successfully logged success for execution_id {execution_id}.")
+
+    def log_pipeline_failure(self, execution_id: int) -> None:
+        """Updates the pipeline execution log to mark a run as failed."""
+        if not self.conn:
+            raise ConnectionError("Database connection is not established.")
+
+        with self.conn.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE pipeline_execution
+                SET
+                    end_timestamp_utc = %s,
+                    status = 'FAILED'
+                WHERE execution_id = %s
+                """,
+                (datetime.datetime.now(datetime.timezone.utc), execution_id),
+            )
+            self.conn.commit()
+            logger.error(f"Successfully logged failure for execution_id {execution_id}.")

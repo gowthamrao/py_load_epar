@@ -33,7 +33,7 @@ def test_transform_and_validate_success():
     mock_spor_client.search_substance.return_value = None
 
     # Act
-    results = list(transform_and_validate(iter(raw_records), mock_spor_client))
+    results = list(transform_and_validate(iter(raw_records), mock_spor_client, 1))
     validated_models = [item[0] for item in results]
 
     # Assert
@@ -74,7 +74,7 @@ def test_transform_and_validate_quarantines_invalid_records(caplog):
 
     # Act
     with caplog.at_level(logging.WARNING):
-        results = list(transform_and_validate(iter(raw_records), mock_spor_client))
+        results = list(transform_and_validate(iter(raw_records), mock_spor_client, 1))
     validated_models = [item[0] for item in results]
 
     # Assert
@@ -112,7 +112,7 @@ def test_transform_and_validate_enrichment():
     mock_spor_client.search_substance.return_value = mock_substance
 
     # Act
-    results = list(transform_and_validate(iter(raw_records), mock_spor_client))
+    results = list(transform_and_validate(iter(raw_records), mock_spor_client, 1))
     epar_record, substance_links = results[0]
 
     # Assert

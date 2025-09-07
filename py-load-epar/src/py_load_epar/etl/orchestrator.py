@@ -121,36 +121,47 @@ def run_etl(settings: Settings) -> None:
     logger.info(f"Starting ETL run with strategy: {settings.etl.load_strategy}")
     adapter = get_db_adapter(settings)
     spor_client = SporApiClient(settings.spor_api)
+    execution_id = None
 
     try:
         adapter.connect(connection_params=None)
 
-        # 1. Prepare main table for loading
+        # 1. Log pipeline start and get execution ID
+        execution_id = adapter.log_pipeline_start(
+            load_strategy=settings.etl.load_strategy
+        )
+
+        # 2. Prepare main table for loading
         target_model = EparIndex
         target_table = "epar_index"
         main_staging_table = adapter.prepare_load(
             load_strategy=settings.etl.load_strategy, target_table=target_table
         )
 
-        # 2. Set up iterators for streaming data
-        high_water_mark = None  # TODO: Fetch from database for CDC
-        raw_records_iterator = extract_data(settings, high_water_mark)
-        # Pass the SPOR client to the transform function
+        # 3. Set up iterators for streaming data
+        high_water_mark = None
+        if settings.etl.load_strategy.upper() == "DELTA":
+            high_water_mark = adapter.get_latest_high_water_mark()
+
+        # The extract function will now return the new high water mark
+        raw_records_iterator, new_high_water_mark = extract_data(
+            settings, high_water_mark
+        )
         enriched_models_iterator = transform_and_validate(
-            raw_records_iterator, spor_client
+            raw_records_iterator, spor_client, execution_id
         )
         batches = _batch_iterator(enriched_models_iterator, settings.etl.batch_size)
 
-        # 3. Process data in batches
+        # 4. Process data in batches
         total_loaded_count = 0
         doc_path = Path(settings.etl.document_storage_path)
 
         for i, batch in enumerate(batches):
-            # The batch now contains tuples of (EparIndex, list[EparSubstanceLink])
-            epar_records = [item[0] for item in batch]
-            substance_links = [link for item in batch for link in item[1]]
-
+            epar_records, substance_links = zip(*batch) if batch else ([], [])
             logger.info(f"Processing batch {i+1} with {len(epar_records)} records.")
+
+            if not epar_records:
+                continue
 
             # Load batch into the main staging table
             loaded_count = adapter.bulk_load_batch(
@@ -161,10 +172,13 @@ def run_etl(settings: Settings) -> None:
             total_loaded_count += loaded_count
 
             # Process ancillary data for the current batch immediately
-            _process_substance_links(adapter, substance_links)
-            _process_documents(adapter, epar_records, doc_path)
+            flat_substance_links = [
+                link for sublist in substance_links for link in sublist
+            ]
+            _process_substance_links(adapter, flat_substance_links)
+            _process_documents(adapter, list(epar_records), doc_path)
 
-        # 4. Finalize the main table load
+        # 5. Finalize the main table load
         logger.info("Finalizing load for epar_index table.")
         adapter.finalize(
             load_strategy=settings.etl.load_strategy,
@@ -173,12 +187,23 @@ def run_etl(settings: Settings) -> None:
             pydantic_model=target_model,
             primary_key_columns=["epar_id"],
         )
+
+        # 6. Log pipeline success
+        adapter.log_pipeline_success(
+            execution_id=execution_id,
+            records_processed=total_loaded_count,
+            new_high_water_mark=new_high_water_mark,
+        )
         logger.info(
-            f"ETL run for epar_index successful. Total records loaded: {total_loaded_count}"
+            f"ETL run successful. Execution ID: {execution_id}. "
+            f"Total records loaded: {total_loaded_count}"
         )
 
     except Exception as e:
         logger.error(f"ETL run failed: {e}", exc_info=True)
+        if adapter and execution_id is not None:
+            adapter.log_pipeline_failure(execution_id)
+        # We still want to rollback the data transaction
         if adapter:
             adapter.rollback()
         raise

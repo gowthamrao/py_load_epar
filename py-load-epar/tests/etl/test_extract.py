@@ -14,6 +14,9 @@ def sample_excel_file() -> Path:
     return Path(__file__).parent.parent / "test_data/sample_ema_data.xlsx"
 
 
+from py_load_epar.config import Settings
+
+
 @patch("py_load_epar.etl.extract.download_excel_file")
 def test_extract_data_parses_excel_correctly(
     mock_download, sample_excel_file: Path
@@ -23,13 +26,16 @@ def test_extract_data_parses_excel_correctly(
     """
     # Arrange: Mock the downloader to return the path to our local sample file
     mock_download.return_value = sample_excel_file
+    settings = Settings()  # Create a dummy settings object
 
-    # Act: Call the extract_data function
-    # The settings object is not used in the new implementation, so we can pass None
-    records = list(extract_data(settings=None))
+    # Act: Call the extract_data function and unpack the results
+    records_iterator, new_hwm = extract_data(settings=settings)
+    records = list(records_iterator)
 
     # Assert: Check that the data was parsed as expected
     assert len(records) == 2
+    assert new_hwm is not None
+    assert new_hwm.day == 15  # The latest date in the sample file is Feb 15
 
     # Check the first record
     record1 = records[0]
@@ -37,8 +43,7 @@ def test_extract_data_parses_excel_correctly(
     assert record1["authorization_status"] == "Authorised"
     assert record1["marketing_authorization_holder_raw"] == "Test Pharma 1"
     assert record1["source_url"] == "http://example.com/doc1.pdf"
-    # The value from Excel is a string, check if it's parsed correctly
-    assert record1["last_update_date_source"] == "2024-01-25"
+    assert record1["last_update_date_source"] == datetime.datetime(2024, 1, 25, 0, 0)
 
     # Check the second record
     record2 = records[1]

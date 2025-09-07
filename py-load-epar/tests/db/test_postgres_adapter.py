@@ -1,11 +1,13 @@
 import datetime
+from unittest.mock import patch
 
 import pytest
 from pydantic import BaseModel
 from testcontainers.postgres import PostgresContainer
 
-from py_load_epar.config import DatabaseSettings
+from py_load_epar.config import Settings
 from py_load_epar.db.postgres import PostgresAdapter
+from py_load_epar.etl.orchestrator import run_etl
 from py_load_epar.models import EparIndex
 
 # Mark all tests in this module as integration tests
@@ -19,25 +21,27 @@ def postgres_container():
         yield postgres
 
 
-@pytest.fixture(scope="module")
-def db_settings(postgres_container: PostgresContainer) -> DatabaseSettings:
+@pytest.fixture(scope="function")
+def db_settings(postgres_container: PostgresContainer) -> Settings:
     """Fixture to create a DatabaseSettings object from the test container."""
-    return DatabaseSettings(
-        host=postgres_container.get_container_host_ip(),
-        port=postgres_container.get_exposed_port(5432),
-        user=postgres_container.username,
-        password=postgres_container.password,
-        dbname=postgres_container.dbname,
+    return Settings(
+        db=DatabaseSettings(
+            host=postgres_container.get_container_host_ip(),
+            port=postgres_container.get_exposed_port(5432),
+            user=postgres_container.username,
+            password=postgres_container.password,
+            dbname=postgres_container.dbname,
+        )
     )
 
 
 @pytest.fixture(scope="function")  # Use function scope to get a clean db for each test
-def postgres_adapter(db_settings: DatabaseSettings) -> PostgresAdapter:
+def postgres_adapter(db_settings: Settings) -> PostgresAdapter:
     """
     Fixture to create a PostgresAdapter instance connected to a clean test container.
     It creates the schema and yields the adapter.
     """
-    adapter = PostgresAdapter(db_settings)
+    adapter = PostgresAdapter(db_settings.db)
     adapter.connect()
 
     # Create schema for each test function
@@ -255,3 +259,82 @@ def test_rollback_on_failure(postgres_adapter: PostgresAdapter, sample_data):
     with postgres_adapter.conn.cursor() as cursor:
         cursor.execute(f"SELECT COUNT(*) FROM {target_table}")
         assert cursor.fetchone()[0] == 0
+
+
+def test_cdc_delta_load_scenario(db_settings: Settings, postgres_adapter: PostgresAdapter):
+    """
+    Tests the end-to-end CDC (Change Data Capture) logic over multiple runs.
+    """
+    # Mock settings for the test
+    settings = db_settings
+    settings.etl.load_strategy = "DELTA"
+
+    # --- RUN 1: Initial load ---
+    run1_data = [
+        {
+            "medicine_name": "TestMed A",
+            "marketing_authorization_holder_raw": "Pharma Inc.",
+            "last_update_date_source": datetime.datetime(2023, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc),
+        },
+        {
+            "medicine_name": "TestMed B",
+            "marketing_authorization_holder_raw": "Pharma Inc.",
+            "last_update_date_source": datetime.datetime(2023, 1, 2, 12, 0, 0, tzinfo=datetime.timezone.utc),
+        },
+    ]
+    run1_hwm = datetime.datetime(2023, 1, 2, 12, 0, 0, tzinfo=datetime.timezone.utc)
+
+    # We patch the extract and SPOR client to isolate the test to the orchestration and DB logic
+    with patch("py_load_epar.etl.orchestrator.extract_data", return_value=(iter(run1_data), run1_hwm)), \
+         patch("py_load_epar.etl.orchestrator.SporApiClient"):
+        run_etl(settings)
+
+    with postgres_adapter.conn.cursor() as cursor:
+        cursor.execute("SELECT COUNT(*) FROM epar_index")
+        assert cursor.fetchone()[0] == 2
+        cursor.execute("SELECT MAX(high_water_mark) FROM pipeline_execution WHERE status = 'SUCCESS'")
+        assert cursor.fetchone()[0] == run1_hwm
+
+    # --- RUN 2: New and updated records ---
+    run2_data = [
+        {
+            "medicine_name": "TestMed B",  # Same as before, should be updated
+            "marketing_authorization_holder_raw": "Pharma Inc.",
+            "last_update_date_source": datetime.datetime(2023, 1, 3, 12, 0, 0, tzinfo=datetime.timezone.utc),
+        },
+        {
+            "medicine_name": "TestMed C",  # New record
+            "marketing_authorization_holder_raw": "Pharma Inc.",
+            "last_update_date_source": datetime.datetime(2023, 1, 4, 12, 0, 0, tzinfo=datetime.timezone.utc),
+        },
+    ]
+    run2_hwm = datetime.datetime(2023, 1, 4, 12, 0, 0, tzinfo=datetime.timezone.utc)
+
+    with patch("py_load_epar.etl.orchestrator.extract_data", return_value=(iter(run2_data), run2_hwm)), \
+         patch("py_load_epar.etl.orchestrator.SporApiClient"):
+        run_etl(settings)
+
+    with postgres_adapter.conn.cursor() as cursor:
+        # Should have 3 records now (2 from run 1, 1 new from run 2)
+        cursor.execute("SELECT COUNT(*) FROM epar_index")
+        assert cursor.fetchone()[0] == 3
+        # The high water mark for the latest successful run should be updated
+        cursor.execute("SELECT MAX(high_water_mark) FROM pipeline_execution WHERE status = 'SUCCESS'")
+        assert cursor.fetchone()[0] == run2_hwm
+
+    # --- RUN 3: No new records ---
+    # The extract function will be filtered by the HWM from run 2, so it should yield no data.
+    with patch("py_load_epar.etl.orchestrator.extract_data", return_value=(iter([]), run2_hwm)), \
+         patch("py_load_epar.etl.orchestrator.SporApiClient"):
+        run_etl(settings)
+
+    with postgres_adapter.conn.cursor() as cursor:
+        # Count should still be 3
+        cursor.execute("SELECT COUNT(*) FROM epar_index")
+        assert cursor.fetchone()[0] == 3
+        # HWM should remain the same as the latest data seen
+        cursor.execute("SELECT MAX(high_water_mark) FROM pipeline_execution WHERE status = 'SUCCESS'")
+        assert cursor.fetchone()[0] == run2_hwm
+        # Check there are two successful executions logged
+        cursor.execute("SELECT COUNT(*) FROM pipeline_execution WHERE status = 'SUCCESS'")
+        assert cursor.fetchone()[0] == 3
