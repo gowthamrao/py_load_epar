@@ -1,42 +1,50 @@
 import datetime
-from unittest.mock import MagicMock
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
 
 from py_load_epar.etl.extract import extract_data
 
 
-def test_extract_data_returns_all_records_without_hwm():
-    """
-    Test that extract_data yields all mock records when no high_water_mark is provided.
-    """
-    settings = MagicMock()
-    records = list(extract_data(settings, high_water_mark=None))
-    assert len(records) == 3
-    assert records[0]["epar_id"] == "EMA/123456"
+@pytest.fixture(scope="module")
+def sample_excel_file() -> Path:
+    """Provides the path to the sample Excel file."""
+    # This path is relative to the root of the project where pytest is run
+    return Path("tests/test_data/sample_ema_data.xlsx")
 
 
-def test_extract_data_filters_based_on_hwm():
+@patch("py_load_epar.etl.extract.download_excel_file")
+def test_extract_data_parses_excel_correctly(
+    mock_download, sample_excel_file: Path
+):
     """
-    Test that extract_data correctly filters records based on the high_water_mark.
+    Test that extract_data correctly downloads and parses the sample Excel file.
     """
-    settings = MagicMock()
-    # This HWM should filter out the first record (2023-05-20)
-    hwm = datetime.date(2023, 5, 20)
+    # Arrange: Mock the downloader to return the path to our local sample file
+    mock_download.return_value = sample_excel_file
 
-    records = list(extract_data(settings, high_water_mark=hwm))
+    # Act: Call the extract_data function
+    # The settings object is not used in the new implementation, so we can pass None
+    records = list(extract_data(settings=None))
 
-    # Only the records with a later date should be returned
+    # Assert: Check that the data was parsed as expected
     assert len(records) == 2
-    assert records[0]["epar_id"] == "EMA/789012"
-    assert records[1]["epar_id"] == "EMA/345678"
 
+    # Check the first record
+    record1 = records[0]
+    assert record1["medicine_name"] == "TestMed1"
+    assert record1["authorization_status"] == "Authorised"
+    assert record1["marketing_authorization_holder_raw"] == "Test Pharma 1"
+    assert record1["source_url"] == "http://example.com/doc1.pdf"
+    # The value from Excel is a string, check if it's parsed correctly
+    assert record1["last_update_date_source"] == "2024-01-25"
 
-def test_extract_data_with_hwm_that_filters_all():
-    """
-    Test that extract_data returns no records if the HWM is after all record dates.
-    """
-    settings = MagicMock()
-    hwm = datetime.date(2024, 1, 1)
+    # Check the second record
+    record2 = records[1]
+    assert record2["medicine_name"] == "TestMed2"
+    assert record2["orphan_medicine"] == "Yes"
+    assert record2["source_url"] == "http://example.com/doc2.pdf"
 
-    records = list(extract_data(settings, high_water_mark=hwm))
-
-    assert len(records) == 0
+    # Assert that the downloader was called
+    mock_download.assert_called_once()
