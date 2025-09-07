@@ -11,7 +11,9 @@ logger = logging.getLogger(__name__)
 
 
 def transform_and_validate(
-    raw_records: Iterator[Dict[str, Any]], spor_client: SporApiClient
+    raw_records: Iterator[Dict[str, Any]],
+    spor_client: SporApiClient,
+    execution_id: int,
 ) -> Iterator[Tuple[EparIndex, List[EparSubstanceLink]]]:
     """
     Transforms raw data, validates it, and enriches it with SPOR API data.
@@ -46,7 +48,7 @@ def transform_and_validate(
 
             id_string = f"{med_name}-{mah_name}"
             raw_record["epar_id"] = hashlib.sha1(id_string.encode()).hexdigest()[:20]
-
+            raw_record["etl_execution_id"] = execution_id
 
             # 1. Validate the base record
             validated_model = EparIndex.model_validate(raw_record)

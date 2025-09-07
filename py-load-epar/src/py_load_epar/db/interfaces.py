@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+import datetime
 from typing import TYPE_CHECKING, Any, Dict, Iterator, Optional, Type
 
 if TYPE_CHECKING:
@@ -83,4 +84,34 @@ class IDatabaseAdapter(ABC):
     @abstractmethod
     def close(self) -> None:
         """Close the database connection."""
+        pass
+
+    @abstractmethod
+    def get_latest_high_water_mark(self) -> Optional[datetime.datetime]:
+        """
+        Retrieves the latest high water mark from the pipeline execution log
+        for successful DELTA runs.
+        """
+        pass
+
+    @abstractmethod
+    def log_pipeline_start(self, load_strategy: str, source_file_version: Optional[str] = None) -> int:
+        """
+        Logs the start of a new pipeline execution and returns the execution ID.
+        """
+        pass
+
+    @abstractmethod
+    def log_pipeline_success(
+        self,
+        execution_id: int,
+        records_processed: int,
+        new_high_water_mark: Optional[datetime.datetime] = None,
+    ) -> None:
+        """Updates the pipeline execution log to mark a run as successful."""
+        pass
+
+    @abstractmethod
+    def log_pipeline_failure(self, execution_id: int) -> None:
+        """Updates the pipeline execution log to mark a run as failed."""
         pass

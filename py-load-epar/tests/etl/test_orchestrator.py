@@ -35,12 +35,13 @@ def test_run_etl_successful_flow(
     mock_spor_client_instance = MagicMock(spec=SporApiClient)
     mock_spor_client_class.return_value = mock_spor_client_instance
 
-    mock_extract.return_value = iter([{"id": 1}])
+    mock_extract.return_value = (iter([{"id": 1}]), None)
 
     # Simulate two validated records being returned by the transform step
     epar_records = [MagicMock(spec=EparIndex), MagicMock(spec=EparIndex)]
     substance_links = [MagicMock(spec=EparSubstanceLink)]
     mock_transform.return_value = iter([(epar_records[0], substance_links), (epar_records[1], [])])
+    mock_adapter.log_pipeline_start.return_value = 123  # Mock execution_id
 
     # Act
     run_etl(settings)
@@ -51,7 +52,7 @@ def test_run_etl_successful_flow(
     mock_adapter.connect.assert_called_once()
     mock_extract.assert_called_once()
     mock_transform.assert_called_once_with(
-        mock_extract.return_value, mock_spor_client_instance
+        mock_extract.return_value[0], mock_spor_client_instance, 123
     )
     mock_adapter.prepare_load.assert_called_once_with(
         load_strategy=settings.etl.load_strategy, target_table="epar_index"
@@ -84,6 +85,9 @@ def test_run_etl_rolls_back_on_failure(
     mock_adapter = MagicMock()
     mock_get_adapter.return_value = mock_adapter
 
+    mock_extract.return_value = (iter([{}]), None)
+    mock_adapter.log_pipeline_start.return_value = 123
+
     # Simulate a failure during the transform step
     error_message = "Validation error"
     with patch(
@@ -95,6 +99,7 @@ def test_run_etl_rolls_back_on_failure(
             run_etl(settings)
 
     # Assert that rollback was called and finalize was not
+    mock_adapter.log_pipeline_failure.assert_called_once_with(123)
     mock_adapter.rollback.assert_called_once()
     assert not mock_adapter.finalize.called
     mock_adapter.close.assert_called_once()
