@@ -60,6 +60,7 @@ class IDatabaseAdapter(ABC):
         target_table: str,
         staging_table: str | None = None,
         pydantic_model: Type["BaseModel"] | None = None,
+        primary_key_columns: list[str] | None = None,
     ) -> None:
         """
         Finalize the load process (e.g., merge staging to target, analyze, commit).
@@ -68,8 +69,9 @@ class IDatabaseAdapter(ABC):
             load_strategy: The loading strategy ('FULL' or 'DELTA').
             target_table: The final target table.
             staging_table: The staging table used for the load (if any).
-            pydantic_model: The Pydantic model, required for 'DELTA' loads to build
-                the merge statement.
+            pydantic_model: The Pydantic model, required for 'DELTA' loads.
+            primary_key_columns: A list of primary key columns, required for 'DELTA'
+                loads to build the merge/conflict statement.
         """
         pass
 
