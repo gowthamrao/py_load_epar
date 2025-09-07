@@ -45,6 +45,7 @@ class EtlSettings(BaseSettings):
     load_strategy: str = "DELTA"  # or "FULL"
     batch_size: int = 1000
     max_retries: int = 5
+    document_storage_path: str = "epar_documents"
 
     model_config = SettingsConfigDict(env_prefix="PY_LOAD_EPAR_ETL_")
 
