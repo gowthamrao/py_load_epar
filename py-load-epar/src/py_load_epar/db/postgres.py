@@ -129,6 +129,7 @@ class PostgresAdapter(IDatabaseAdapter):
         target_table: str,
         staging_table: str | None = None,
         pydantic_model: Type[BaseModel] | None = None,
+        primary_key_columns: list[str] | None = None,
     ) -> None:
         """
         Finalize the load process. For 'DELTA', merges from staging to target.
@@ -138,20 +139,27 @@ class PostgresAdapter(IDatabaseAdapter):
             raise ConnectionError("Database connection is not established.")
 
         with self.conn.cursor() as cursor:
-            if load_strategy.upper() == "DELTA" and staging_table and pydantic_model:
+            if load_strategy.upper() == "DELTA":
+                if not all([staging_table, pydantic_model, primary_key_columns]):
+                    raise ValueError(
+                        "For 'DELTA' strategy, 'staging_table', 'pydantic_model', "
+                        "and 'primary_key_columns' must be provided."
+                    )
                 logger.info(f"Merging data from {staging_table} to {target_table}.")
 
                 columns = list(pydantic_model.model_fields.keys())
-                # Assuming the primary key is the first column for the ON CONFLICT
-                # clause
-                pk_column = columns[0]
+                pk_cols_str = ", ".join(primary_key_columns)
 
-                update_cols = [f"{col} = EXCLUDED.{col}" for col in columns[1:]]
+                update_cols = [
+                    f"{col} = EXCLUDED.{col}"
+                    for col in columns
+                    if col not in primary_key_columns
+                ]
 
                 merge_sql = f"""
                 INSERT INTO {target_table} ({', '.join(columns)})
                 SELECT {', '.join(columns)} FROM {staging_table}
-                ON CONFLICT ({pk_column}) DO UPDATE SET
+                ON CONFLICT ({pk_cols_str}) DO UPDATE SET
                     {', '.join(update_cols)};
                 """
                 cursor.execute(merge_sql)

@@ -75,59 +75,73 @@ def _process_documents(
     loaded_count = adapter.bulk_load_batch(
         iter(document_records), staging_table, EparDocument
     )
-    adapter.finalize("DELTA", target_table, staging_table, EparDocument)
+    adapter.finalize(
+        "DELTA",
+        target_table,
+        staging_table,
+        EparDocument,
+        primary_key_columns=["document_id"],
+    )
 
     logger.info(f"Successfully processed and loaded {loaded_count} documents.")
     return loaded_count
 
 
 def run_etl(settings: Settings) -> None:
-    """Runs the main ETL pipeline, including document processing."""
+    """
+    Runs the main ETL pipeline, including document processing, in a memory-efficient
+    batch-oriented way.
+    """
     logger.info(f"Starting ETL run with strategy: {settings.etl.load_strategy}")
     adapter = get_db_adapter(settings)
-    all_validated_records = []
 
     try:
         adapter.connect(connection_params=None)
 
-        high_water_mark = None  # TODO: Fetch from database
-        raw_records_iterator = extract_data(settings, high_water_mark)
-        validated_models_iterator = transform_and_validate(raw_records_iterator)
-
+        # 1. Prepare main table for loading
         target_model = EparIndex
         target_table = "epar_index"
-        staging_table = adapter.prepare_load(
+        main_staging_table = adapter.prepare_load(
             load_strategy=settings.etl.load_strategy, target_table=target_table
         )
 
-        total_loaded_count = 0
+        # 2. Set up iterators for streaming data
+        high_water_mark = None  # TODO: Fetch from database for CDC
+        raw_records_iterator = extract_data(settings, high_water_mark)
+        validated_models_iterator = transform_and_validate(raw_records_iterator)
         batches = _batch_iterator(validated_models_iterator, settings.etl.batch_size)
+
+        # 3. Process data in batches
+        total_loaded_count = 0
+        doc_path = Path(settings.etl.document_storage_path)
 
         for i, batch in enumerate(batches):
             logger.info(f"Processing batch {i+1} with {len(batch)} records.")
-            # Keep track of all validated records for document processing later
-            all_validated_records.extend(batch)
+
+            # Load batch into the main staging table
             loaded_count = adapter.bulk_load_batch(
                 data_iterator=iter(batch),
-                target_table=staging_table,
+                target_table=main_staging_table,
                 pydantic_model=target_model,
             )
             total_loaded_count += loaded_count
 
+            # Process documents for the current batch immediately
+            logger.info(f"Processing documents for batch {i+1}.")
+            _process_documents(adapter, batch, doc_path)
+
+        # 4. Finalize the main table load
+        logger.info("Finalizing load for epar_index table.")
         adapter.finalize(
             load_strategy=settings.etl.load_strategy,
             target_table=target_table,
-            staging_table=staging_table,
+            staging_table=main_staging_table,
             pydantic_model=target_model,
+            primary_key_columns=["epar_id"],
         )
         logger.info(
             f"ETL run for epar_index successful. Total records loaded: {total_loaded_count}"
         )
-
-        # After the main ETL is complete, process the documents
-        if all_validated_records:
-            doc_path = Path(settings.etl.document_storage_path)
-            _process_documents(adapter, all_validated_records, doc_path)
 
     except Exception as e:
         logger.error(f"ETL run failed: {e}", exc_info=True)

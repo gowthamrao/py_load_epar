@@ -10,8 +10,8 @@ from py_load_epar.etl.extract import extract_data
 @pytest.fixture(scope="module")
 def sample_excel_file() -> Path:
     """Provides the path to the sample Excel file."""
-    # This path is relative to the root of the project where pytest is run
-    return Path("tests/test_data/sample_ema_data.xlsx")
+    # Construct path relative to this test file, which is more robust
+    return Path(__file__).parent.parent / "test_data/sample_ema_data.xlsx"
 
 
 @patch("py_load_epar.etl.extract.download_excel_file")
