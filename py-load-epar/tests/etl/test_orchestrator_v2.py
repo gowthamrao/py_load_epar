@@ -4,19 +4,21 @@ from pathlib import Path
 from unittest.mock import MagicMock, call
 
 import requests
+
 from py_load_epar.etl.orchestrator import _process_documents
 from py_load_epar.models import EparDocument, EparIndex
+from py_load_epar.storage.interfaces import IStorage
 
 
-def test_process_documents_parses_html_and_downloads(mocker, tmp_path):
+def test_process_documents_parses_html_and_downloads(mocker):
     """
     Tests that _process_documents correctly fetches an HTML page, parses it,
     finds a relevant PDF link, and processes it.
     """
     # Arrange
     mock_adapter = MagicMock()
-    mock_adapter.bulk_load_batch.return_value = 1  # Simulate one record loaded
-    document_storage_path = tmp_path
+    mock_adapter.bulk_load_batch.return_value = 1
+    mock_storage = MagicMock(spec=IStorage)
 
     # Mock the response from requests.get
     mock_response = mocker.patch("requests.get")
@@ -45,9 +47,9 @@ def test_process_documents_parses_html_and_downloads(mocker, tmp_path):
     mock_download = mocker.patch(
         "py_load_epar.etl.orchestrator.download_document_and_hash"
     )
-    fake_storage_path = document_storage_path / "downloaded.pdf"
+    fake_storage_uri = "file:///tmp/fake_storage/downloaded.pdf"
     fake_hash = "fake_sha256_hash"
-    mock_download.return_value = (fake_storage_path, fake_hash)
+    mock_download.return_value = (fake_storage_uri, fake_hash)
 
     # Create a sample EPAR record
     record = EparIndex(
@@ -61,7 +63,7 @@ def test_process_documents_parses_html_and_downloads(mocker, tmp_path):
 
     # Act
     result_count = _process_documents(
-        mock_adapter, processed_records, document_storage_path
+        adapter=mock_adapter, processed_records=processed_records, storage=mock_storage
     )
 
     # Assert
@@ -72,7 +74,7 @@ def test_process_documents_parses_html_and_downloads(mocker, tmp_path):
     mock_response.assert_called_once_with(epar_page_url, timeout=30)
 
     # 3. Assert that the document was "downloaded" with the correct full URL
-    mock_download.assert_called_once_with(pdf_full_url, document_storage_path)
+    mock_download.assert_called_once_with(url=pdf_full_url, storage=mock_storage)
 
     # 4. Assert that the database load was prepared and finalized correctly
     mock_adapter.prepare_load.assert_called_once_with("DELTA", "epar_documents")
@@ -89,6 +91,6 @@ def test_process_documents_parses_html_and_downloads(mocker, tmp_path):
     assert isinstance(loaded_doc, EparDocument)
     assert loaded_doc.epar_id == "test_epar_001"
     assert loaded_doc.source_url == pdf_full_url
-    assert loaded_doc.storage_location == str(fake_storage_path)
+    assert loaded_doc.storage_location == fake_storage_uri
     assert loaded_doc.file_hash == fake_hash
     assert "public assessment report" in loaded_doc.document_type

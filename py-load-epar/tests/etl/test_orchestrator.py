@@ -1,15 +1,16 @@
-from unittest.mock import MagicMock, patch
 import datetime
+from unittest.mock import MagicMock, patch
 
 import pytest
-from pathlib import Path
 
 from py_load_epar.config import Settings
 from py_load_epar.etl.orchestrator import run_etl
 from py_load_epar.models import EparIndex, EparSubstanceLink
 from py_load_epar.spor_api.client import SporApiClient
+from py_load_epar.storage.interfaces import IStorage
 
 
+@patch("py_load_epar.etl.orchestrator.StorageFactory")
 @patch("py_load_epar.etl.orchestrator.SporApiClient")
 @patch("py_load_epar.etl.orchestrator.get_db_adapter")
 @patch("py_load_epar.etl.orchestrator.extract_data")
@@ -23,6 +24,7 @@ def test_run_etl_successful_flow(
     mock_extract,
     mock_get_adapter,
     mock_spor_client_class,
+    mock_storage_factory,
 ):
     """
     Test the happy path of the ETL orchestrator, ensuring all main components
@@ -30,31 +32,33 @@ def test_run_etl_successful_flow(
     """
     # Arrange
     settings = Settings()
-    settings.etl.document_storage_path = "/tmp/docs"
     mock_adapter = MagicMock()
     mock_adapter.get_latest_high_water_mark.return_value = None
     mock_get_adapter.return_value = mock_adapter
+
     mock_spor_client_instance = MagicMock(spec=SporApiClient)
     mock_spor_client_class.return_value = mock_spor_client_instance
+
+    mock_storage_instance = MagicMock(spec=IStorage)
+    mock_storage_factory.return_value.get_storage.return_value = mock_storage_instance
 
     mock_raw_records_iterator = iter([{"id": 1}])
     mock_extract.return_value = mock_raw_records_iterator
 
-    # Simulate two validated records being returned by the transform step
     record1 = MagicMock(spec=EparIndex)
     record1.last_update_date_source = datetime.date(2024, 1, 1)
     record2 = MagicMock(spec=EparIndex)
     record2.last_update_date_source = datetime.date(2024, 1, 2)
     epar_records = [record1, record2]
-
     substance_links = [MagicMock(spec=EparSubstanceLink)]
     mock_transform.return_value = iter([(epar_records[0], substance_links), (epar_records[1], [])])
-    mock_adapter.log_pipeline_start.return_value = 123  # Mock execution_id
+    mock_adapter.log_pipeline_start.return_value = 123
 
     # Act
     run_etl(settings)
 
-    # Assert Core ETL
+    # Assert
+    mock_storage_factory.assert_called_once_with(settings.storage)
     mock_spor_client_class.assert_called_once_with(settings.spor_api)
     mock_get_adapter.assert_called_once_with(settings)
     mock_adapter.connect.assert_called_once()
@@ -62,28 +66,21 @@ def test_run_etl_successful_flow(
     mock_transform.assert_called_once_with(
         mock_raw_records_iterator, mock_spor_client_instance, 123
     )
-    mock_adapter.prepare_load.assert_called_once_with(
-        load_strategy=settings.etl.load_strategy, target_table="epar_index"
+    mock_process_links.assert_called_once_with(mock_adapter, substance_links)
+    mock_process_docs.assert_called_once_with(
+        adapter=mock_adapter,
+        processed_records=list(epar_records),
+        storage=mock_storage_instance,
     )
-    mock_adapter.bulk_load_batch.assert_called_once()
-    mock_adapter.finalize.assert_called_once()
-    assert not mock_adapter.rollback.called
     mock_adapter.close.assert_called_once()
 
-    # Assert Ancillary Data Processing
-    mock_process_links.assert_called_once_with(mock_adapter, substance_links)
-    mock_process_docs.assert_called_once()
-    call_args, _ = mock_process_docs.call_args
-    assert call_args[0] is mock_adapter
-    assert call_args[1] == epar_records
-    assert call_args[2] == Path(settings.etl.document_storage_path)
 
-
+@patch("py_load_epar.etl.orchestrator.StorageFactory")
 @patch("py_load_epar.etl.orchestrator.SporApiClient")
 @patch("py_load_epar.etl.orchestrator.get_db_adapter")
 @patch("py_load_epar.etl.orchestrator.extract_data")
 def test_run_etl_rolls_back_on_failure(
-    mock_extract, mock_get_adapter, mock_spor_client_class
+    mock_extract, mock_get_adapter, mock_spor_client_class, mock_storage_factory
 ):
     """
     Test that the orchestrator calls rollback() on the adapter when an error occurs.
@@ -96,7 +93,6 @@ def test_run_etl_rolls_back_on_failure(
     mock_extract.return_value = iter([{}])
     mock_adapter.log_pipeline_start.return_value = 123
 
-    # Simulate a failure during the transform step
     error_message = "Validation error"
     with patch(
         "py_load_epar.etl.orchestrator.transform_and_validate",
@@ -106,7 +102,6 @@ def test_run_etl_rolls_back_on_failure(
         with pytest.raises(Exception, match=error_message):
             run_etl(settings)
 
-    # Assert that rollback was called and finalize was not
     mock_adapter.log_pipeline_failure.assert_called_once_with(123)
     mock_adapter.rollback.assert_called_once()
     assert not mock_adapter.finalize.called

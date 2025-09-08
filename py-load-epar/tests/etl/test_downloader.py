@@ -1,6 +1,5 @@
 import hashlib
-from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import requests_mock
@@ -8,37 +7,44 @@ import requests_mock
 from py_load_epar.etl.downloader import (
     _download_file_to_stream,
     download_document_and_hash,
-    download_excel_file,
 )
+from py_load_epar.storage.interfaces import IStorage
 
 
-def test_download_excel_file(requests_mock, tmp_path: Path):
-    """Test that the Excel file is downloaded correctly."""
-    url = "https://fake-ema-url.com/data.xlsx"
-    mock_content = b"excel_file_content"
-    requests_mock.get(url, content=mock_content)
-
-    download_path = download_excel_file(url, destination_folder=tmp_path)
-
-    assert download_path.exists()
-    assert download_path.read_bytes() == mock_content
-    assert download_path.name == "ema_data.xlsx"
-
-
-def test_download_document_and_hash(requests_mock, tmp_path: Path):
-    """Test that a document is downloaded and its hash is calculated correctly."""
+def test_download_document_and_hash_with_mock_storage(requests_mock):
+    """
+    Test that a document is downloaded, hashed, and saved via a mock storage adapter.
+    """
     url = "https://fake-ema-url.com/document.pdf"
-    mock_content = b"some_pdf_content"
+    mock_content = b"some_pdf_content_for_testing"
     requests_mock.get(url, content=mock_content)
 
+    # Create a mock storage object that adheres to the IStorage interface
+    mock_storage = MagicMock(spec=IStorage)
+    expected_uri = "mock://storage/documents/document.pdf"
+    mock_storage.save.return_value = expected_uri
+
+    # Calculate the expected hash
     expected_hash = hashlib.sha256(mock_content).hexdigest()
 
-    storage_path, file_hash = download_document_and_hash(url, tmp_path)
+    # Call the function with the mock storage
+    storage_uri, file_hash = download_document_and_hash(url, mock_storage)
 
-    assert storage_path.exists()
-    assert storage_path.read_bytes() == mock_content
+    # --- Assertions ---
+    # 1. Check the return values are correct
+    assert storage_uri == expected_uri
     assert file_hash == expected_hash
-    assert storage_path.name == "document.pdf"
+
+    # 2. Check that the 'save' method on the mock storage was called correctly
+    mock_storage.save.assert_called_once()
+
+    # 3. Inspect the arguments passed to the 'save' method
+    call_args = mock_storage.save.call_args
+    saved_stream = call_args.kwargs['data_stream']
+    saved_object_name = call_args.kwargs['object_name']
+
+    assert saved_stream.read() == mock_content
+    assert saved_object_name == "documents/document.pdf"
 
 
 def test_download_raises_exception_on_http_error(requests_mock):

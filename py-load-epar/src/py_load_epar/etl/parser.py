@@ -24,7 +24,12 @@ def _snake_case(s: str) -> str:
     return s.lower()
 
 
-def parse_ema_excel_file(file_path: Path) -> Iterator[Dict[str, Any]]:
+from typing import IO, Union
+
+
+def parse_ema_excel_file(
+    file_source: Union[Path, IO[bytes]]
+) -> Iterator[Dict[str, Any]]:
     """
     Parses an EMA Excel file and yields each row as a dictionary.
 
@@ -35,14 +40,18 @@ def parse_ema_excel_file(file_path: Path) -> Iterator[Dict[str, Any]]:
     Pydantic model field names.
 
     Args:
-        file_path: The path to the Excel file (.xlsx) to be parsed.
+        file_source: The source of the Excel data. Can be a Path object to a
+                     local file or a file-like object (e.g., io.BytesIO) in
+                     binary mode.
 
     Yields:
         A dictionary representing a single row from the Excel file.
     """
-    logger.info(f"Starting to parse Excel file: {file_path}")
+    logger.info(f"Starting to parse Excel file from source: {type(file_source)}")
     try:
-        workbook = openpyxl.load_workbook(filename=file_path, read_only=True)
+        # openpyxl.load_workbook can accept either a filename (Path) or a
+        # file-like object directly.
+        workbook = openpyxl.load_workbook(filename=file_source, read_only=True)
         sheet = workbook.active
 
         if sheet is None:
@@ -60,8 +69,8 @@ def parse_ema_excel_file(file_path: Path) -> Iterator[Dict[str, Any]]:
             yield dict(zip(headers, row))
 
     except Exception as e:
-        logger.error(f"Failed to parse Excel file {file_path}. Error: {e}")
+        logger.error(f"Failed to parse Excel file from {type(file_source)}. Error: {e}")
         # Re-raise the exception to be handled by the calling orchestrator
         raise
 
-    logger.info(f"Finished parsing Excel file: {file_path}")
+    logger.info(f"Finished parsing Excel file from {type(file_source)}")
