@@ -1,62 +1,16 @@
 import datetime
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from pydantic import BaseModel
-from testcontainers.postgres import PostgresContainer
 
-from py_load_epar.config import Settings
+from py_load_epar.config import DatabaseSettings, Settings
 from py_load_epar.db.postgres import PostgresAdapter
 from py_load_epar.etl.orchestrator import run_etl
 from py_load_epar.models import EparIndex
 
 # Mark all tests in this module as integration tests
 pytestmark = pytest.mark.integration
-
-
-@pytest.fixture(scope="module")
-def postgres_container():
-    """Fixture to start and stop a PostgreSQL test container."""
-    with PostgresContainer("postgres:16-alpine") as postgres:
-        yield postgres
-
-
-@pytest.fixture(scope="function")
-def db_settings(postgres_container: PostgresContainer) -> Settings:
-    """Fixture to create a DatabaseSettings object from the test container."""
-    return Settings(
-        db=DatabaseSettings(
-            host=postgres_container.get_container_host_ip(),
-            port=postgres_container.get_exposed_port(5432),
-            user=postgres_container.username,
-            password=postgres_container.password,
-            dbname=postgres_container.dbname,
-        )
-    )
-
-
-@pytest.fixture(scope="function")  # Use function scope to get a clean db for each test
-def postgres_adapter(db_settings: Settings) -> PostgresAdapter:
-    """
-    Fixture to create a PostgresAdapter instance connected to a clean test container.
-    It creates the schema and yields the adapter.
-    """
-    adapter = PostgresAdapter(db_settings.db)
-    adapter.connect()
-
-    # Create schema for each test function
-    with open("src/py_load_epar/db/schema.sql") as f:
-        with adapter.conn.cursor() as cursor:
-            cursor.execute(f.read())
-    adapter.conn.commit()
-
-    yield adapter
-
-    # Teardown: drop all tables to ensure a clean state for the next test
-    with adapter.conn.cursor() as cursor:
-        cursor.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
-    adapter.conn.commit()
-    adapter.close()
 
 
 @pytest.fixture
@@ -272,46 +226,62 @@ def test_cdc_delta_load_scenario(db_settings: Settings, postgres_adapter: Postgr
     # --- RUN 1: Initial load ---
     run1_data = [
         {
+            "product_number": "EMA/1",
             "medicine_name": "TestMed A",
             "marketing_authorization_holder_raw": "Pharma Inc.",
-            "last_update_date_source": datetime.datetime(2023, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc),
+            "last_update_date_source": datetime.date(2023, 1, 1),
+            "authorization_status": "Authorised",
         },
         {
+            "product_number": "EMA/2",
             "medicine_name": "TestMed B",
             "marketing_authorization_holder_raw": "Pharma Inc.",
-            "last_update_date_source": datetime.datetime(2023, 1, 2, 12, 0, 0, tzinfo=datetime.timezone.utc),
+            "last_update_date_source": datetime.date(2023, 1, 2),
+            "authorization_status": "Authorised",
         },
     ]
     run1_hwm = datetime.datetime(2023, 1, 2, 12, 0, 0, tzinfo=datetime.timezone.utc)
 
     # We patch the extract and SPOR client to isolate the test to the orchestration and DB logic
-    with patch("py_load_epar.etl.orchestrator.extract_data", return_value=(iter(run1_data), run1_hwm)), \
-         patch("py_load_epar.etl.orchestrator.SporApiClient"):
+    with patch("py_load_epar.etl.orchestrator.extract_data", return_value=iter(run1_data)), patch(
+        "py_load_epar.etl.orchestrator.SporApiClient"
+    ) as mock_spor_client_class:
+        mock_spor_client_instance = mock_spor_client_class.return_value
+        mock_spor_client_instance.search_organisation.return_value = None
+        mock_spor_client_instance.search_substance.return_value = None
         run_etl(settings)
 
     with postgres_adapter.conn.cursor() as cursor:
         cursor.execute("SELECT COUNT(*) FROM epar_index")
         assert cursor.fetchone()[0] == 2
         cursor.execute("SELECT MAX(high_water_mark) FROM pipeline_execution WHERE status = 'SUCCESS'")
-        assert cursor.fetchone()[0] == run1_hwm
+        assert cursor.fetchone()[0].date() == run1_hwm.date()
 
     # --- RUN 2: New and updated records ---
     run2_data = [
         {
+            "product_number": "EMA/2",
             "medicine_name": "TestMed B",  # Same as before, should be updated
             "marketing_authorization_holder_raw": "Pharma Inc.",
-            "last_update_date_source": datetime.datetime(2023, 1, 3, 12, 0, 0, tzinfo=datetime.timezone.utc),
+            "last_update_date_source": datetime.date(2023, 1, 3),
+            "authorization_status": "Authorised",
         },
         {
+            "product_number": "EMA/3",
             "medicine_name": "TestMed C",  # New record
             "marketing_authorization_holder_raw": "Pharma Inc.",
-            "last_update_date_source": datetime.datetime(2023, 1, 4, 12, 0, 0, tzinfo=datetime.timezone.utc),
+            "last_update_date_source": datetime.date(2023, 1, 4),
+            "authorization_status": "Authorised",
         },
     ]
     run2_hwm = datetime.datetime(2023, 1, 4, 12, 0, 0, tzinfo=datetime.timezone.utc)
 
-    with patch("py_load_epar.etl.orchestrator.extract_data", return_value=(iter(run2_data), run2_hwm)), \
-         patch("py_load_epar.etl.orchestrator.SporApiClient"):
+    with patch("py_load_epar.etl.orchestrator.extract_data", return_value=iter(run2_data)), patch(
+        "py_load_epar.etl.orchestrator.SporApiClient"
+    ) as mock_spor_client_class:
+        mock_spor_client_instance = mock_spor_client_class.return_value
+        mock_spor_client_instance.search_organisation.return_value = None
+        mock_spor_client_instance.search_substance.return_value = None
         run_etl(settings)
 
     with postgres_adapter.conn.cursor() as cursor:
@@ -320,12 +290,13 @@ def test_cdc_delta_load_scenario(db_settings: Settings, postgres_adapter: Postgr
         assert cursor.fetchone()[0] == 3
         # The high water mark for the latest successful run should be updated
         cursor.execute("SELECT MAX(high_water_mark) FROM pipeline_execution WHERE status = 'SUCCESS'")
-        assert cursor.fetchone()[0] == run2_hwm
+        assert cursor.fetchone()[0].date() == run2_hwm.date()
 
     # --- RUN 3: No new records ---
     # The extract function will be filtered by the HWM from run 2, so it should yield no data.
-    with patch("py_load_epar.etl.orchestrator.extract_data", return_value=(iter([]), run2_hwm)), \
-         patch("py_load_epar.etl.orchestrator.SporApiClient"):
+    with patch("py_load_epar.etl.orchestrator.extract_data", return_value=iter([])), patch(
+        "py_load_epar.etl.orchestrator.SporApiClient"
+    ):
         run_etl(settings)
 
     with postgres_adapter.conn.cursor() as cursor:
@@ -334,7 +305,7 @@ def test_cdc_delta_load_scenario(db_settings: Settings, postgres_adapter: Postgr
         assert cursor.fetchone()[0] == 3
         # HWM should remain the same as the latest data seen
         cursor.execute("SELECT MAX(high_water_mark) FROM pipeline_execution WHERE status = 'SUCCESS'")
-        assert cursor.fetchone()[0] == run2_hwm
+        assert cursor.fetchone()[0].date() == run2_hwm.date()
         # Check there are two successful executions logged
         cursor.execute("SELECT COUNT(*) FROM pipeline_execution WHERE status = 'SUCCESS'")
         assert cursor.fetchone()[0] == 3

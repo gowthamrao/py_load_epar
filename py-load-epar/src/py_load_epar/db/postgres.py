@@ -157,12 +157,21 @@ class PostgresAdapter(IDatabaseAdapter):
                     if col not in primary_key_columns
                 ]
 
-                merge_sql = f"""
-                INSERT INTO {target_table} ({', '.join(columns)})
-                SELECT {', '.join(columns)} FROM {staging_table}
-                ON CONFLICT ({pk_cols_str}) DO UPDATE SET
-                    {', '.join(update_cols)};
-                """
+                if not update_cols:
+                    # If all columns are part of the PK, there's nothing to update.
+                    # We just want to insert the new records.
+                    merge_sql = f"""
+                    INSERT INTO {target_table} ({', '.join(columns)})
+                    SELECT {', '.join(columns)} FROM {staging_table}
+                    ON CONFLICT ({pk_cols_str}) DO NOTHING;
+                    """
+                else:
+                    merge_sql = f"""
+                    INSERT INTO {target_table} ({', '.join(columns)})
+                    SELECT {', '.join(columns)} FROM {staging_table}
+                    ON CONFLICT ({pk_cols_str}) DO UPDATE SET
+                        {', '.join(update_cols)};
+                    """
                 cursor.execute(merge_sql)
                 logger.info(f"Merged {cursor.rowcount} records into {target_table}.")
 

@@ -204,11 +204,6 @@ def run_etl(settings: Settings) -> None:
         if settings.etl.load_strategy.upper() == "DELTA":
             high_water_mark = adapter.get_latest_high_water_mark()
 
-        # 3. Set up iterators for streaming data
-        high_water_mark = None
-        if settings.etl.load_strategy.upper() == "DELTA":
-            high_water_mark = adapter.get_latest_high_water_mark()
-
         raw_records_iterator = extract_data(settings, high_water_mark)
         enriched_models_iterator = transform_and_validate(
             raw_records_iterator, spor_client, execution_id
@@ -229,9 +224,10 @@ def run_etl(settings: Settings) -> None:
 
             # Find the latest date in the current batch to update the HWM
             for record in epar_records:
-                if (
-                    new_high_water_mark is None
-                    or record.last_update_date_source > new_high_water_mark
+                if new_high_water_mark is None or record.last_update_date_source > (
+                    new_high_water_mark.date()
+                    if isinstance(new_high_water_mark, datetime.datetime)
+                    else new_high_water_mark
                 ):
                     new_high_water_mark = record.last_update_date_source
 

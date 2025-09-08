@@ -42,9 +42,9 @@ def test_run_etl_successful_flow(
 
     # Simulate two validated records being returned by the transform step
     record1 = MagicMock(spec=EparIndex)
-    record1.last_update_date_source = datetime.datetime(2024, 1, 1)
+    record1.last_update_date_source = datetime.date(2024, 1, 1)
     record2 = MagicMock(spec=EparIndex)
-    record2.last_update_date_source = datetime.datetime(2024, 1, 2)
+    record2.last_update_date_source = datetime.date(2024, 1, 2)
     epar_records = [record1, record2]
 
     substance_links = [MagicMock(spec=EparSubstanceLink)]
