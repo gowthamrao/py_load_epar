@@ -1,111 +1,84 @@
 import datetime
 import logging
+import shutil
+import tempfile
+from pathlib import Path
 from typing import Any, Dict, Iterator
 
-import openpyxl
 from py_load_epar.config import Settings
-from py_load_epar.etl.downloader import EMA_EXCEL_URL, download_file_to_memory
+from py_load_epar.etl.downloader import download_excel_file
+from py_load_epar.etl.parser import parse_ema_excel_file
 
 logger = logging.getLogger(__name__)
-
-
-def _clean_header(header: str) -> str:
-    """Converts an Excel header to a snake_case identifier."""
-    if not header:
-        return ""
-    return "".join(filter(str.isalnum, header.lower()))
 
 
 def extract_data(
     settings: Settings, high_water_mark: datetime.datetime | None = None
 ) -> Iterator[Dict[str, Any]]:
     """
-    Extracts EPAR data from the source, implementing CDC filtering.
+    Orchestrates the extraction of EPAR data from the source file.
 
-    Downloads the EMA Excel file, parses it, and yields records row by row that
-    are newer than the provided high_water_mark. The caller is responsible for
-    determining the new high water mark from the yielded records.
+    1. Downloads the main EMA data file to a temporary location.
+    2. Parses the Excel file into a stream of dictionaries with snake_cased keys.
+    3. Remaps and cleans raw dictionary keys to match Pydantic model fields.
+    4. Filters the records based on the high_water_mark for Change Data Capture (CDC).
+    5. Cleans up the temporary file after completion.
 
     Args:
-        settings: The application settings.
+        settings: The application settings, containing the URL for the data file.
         high_water_mark: The timestamp of the last successful run. Only records
                          newer than this will be processed.
 
     Yields:
-        An iterator of dictionaries for each new or updated record.
+        An iterator of dictionaries, where each dictionary represents a single
+        new or updated record, cleaned and ready for Pydantic validation.
     """
-    logger.info("Starting data extraction.")
+    logger.info("Starting data extraction process.")
     if high_water_mark:
-        logger.info(f"Using high water mark for CDC: {high_water_mark}")
+        logger.info(f"Using high water mark for CDC: {high_water_mark.isoformat()}")
 
-    # Download the Excel file into an in-memory buffer
-    excel_file_stream = download_file_to_memory(url=EMA_EXCEL_URL)
+    temp_dir = tempfile.mkdtemp(prefix="py_load_epar_")
+    try:
+        file_path = download_excel_file(
+            url=settings.api.ema_file_url, destination_folder=Path(temp_dir)
+        )
+        raw_records_iterator = parse_ema_excel_file(file_path)
 
-    # Process the in-memory file
-    workbook = openpyxl.load_workbook(excel_file_stream, read_only=True)
-    sheet = workbook.active
-    if sheet is None:
-        raise ValueError("No active worksheet found in the Excel file.")
-
-    header_row = [cell.value for cell in sheet[1]]
-    header_to_field_map = {
-        "Category": "category",
-        "Medicine name": "medicine_name",
-        "Therapeutic area": "therapeutic_area",
-        "INN / common name": "active_substance_raw",
-        "Authorisation status": "authorization_status",
-        "Orphan medicine": "orphan_medicine",
-        "Marketing authorisation holder/company name": "marketing_authorization_holder_raw",
-        "Date of opinion": "date_of_opinion",
-        "First published": "first_published",
-        "Revision date": "last_update_date_source",
-        "URL": "source_url",
-    }
-    index_to_field_name = {
-        i: header_to_field_map[h]
-        for i, h in enumerate(header_row)
-        if h in header_to_field_map
-    }
-
-    if not index_to_field_name:
-        raise ValueError("Could not map any headers from Excel file.")
-
-    processed_count = 0
-    for row in sheet.iter_rows(min_row=2, values_only=True):
-        record = {
-            field_name: row[index]
-            for index, field_name in index_to_field_name.items()
-            if index < len(row)
-        }
-
-        if not record.get("medicine_name"):
-            continue
-
-        update_date_val = record.get("last_update_date_source")
-        if isinstance(update_date_val, str):
-            try:
-                # Handle ISO format with or without time component
-                if " " in update_date_val:
-                    update_date_val = datetime.datetime.strptime(
-                        update_date_val, "%Y-%m-%d %H:%M:%S"
-                    )
-                else:
-                    update_date_val = datetime.datetime.fromisoformat(update_date_val)
-            except (ValueError, TypeError):
-                logger.warning(
-                    f"Could not parse date '{update_date_val}' for "
-                    f"record {record.get('medicine_name')}. Skipping."
-                )
+        processed_count = 0
+        for record in raw_records_iterator:
+            # --- Field renaming and type conversion ---
+            update_date_val = record.get("revision_date")
+            if not update_date_val:
                 continue
-        elif not isinstance(update_date_val, datetime.datetime):
-            continue  # Skip rows without a valid date for CDC
 
-        record["last_update_date_source"] = update_date_val
+            if isinstance(update_date_val, datetime.datetime):
+                record_date = update_date_val.date()
+            elif isinstance(update_date_val, datetime.date):
+                record_date = update_date_val
+            else:
+                try:
+                    record_date = datetime.datetime.fromisoformat(str(update_date_val)).date()
+                except (ValueError, TypeError):
+                    logger.warning(f"Could not parse date '{update_date_val}' for record. Skipping.")
+                    continue
 
-        # Apply CDC filter
-        if high_water_mark and update_date_val <= high_water_mark:
-            continue
+            # The Pydantic model expects 'last_update_date_source'
+            record["last_update_date_source"] = record_date
 
-        yield record
-        processed_count += 1
-    logger.info(f"Finished data extraction. Yielded {processed_count} records.")
+            # Rename keys from parser output to match Pydantic model fields
+            if "marketing_authorisation_holder_company_name" in record:
+                record["marketing_authorization_holder_raw"] = record.pop("marketing_authorisation_holder_company_name")
+            if "active_substance" in record:
+                record["active_substance_raw"] = record.pop("active_substance")
+
+            # --- CDC Filter ---
+            if high_water_mark and record_date <= high_water_mark.date():
+                continue
+
+            yield record
+            processed_count += 1
+        logger.info(f"Finished data extraction. Yielded {processed_count} new/updated records.")
+
+    finally:
+        shutil.rmtree(temp_dir)
+        logger.debug(f"Cleaned up temporary directory: {temp_dir}")

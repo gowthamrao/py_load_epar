@@ -2,61 +2,66 @@ import datetime
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
+from py_load_epar.config import Settings
 from py_load_epar.etl.extract import extract_data
 
 
-@pytest.fixture(scope="module")
-def sample_excel_file() -> Path:
-    """Provides the path to the sample Excel file."""
-    # Construct path relative to this test file, which is more robust
-    return Path(__file__).parent.parent / "test_data/sample_ema_data.xlsx"
-
-
-import io
-
-from py_load_epar.config import Settings
-
-
-@patch("py_load_epar.etl.extract.download_file_to_memory")
-def test_extract_data_parses_excel_correctly(
-    mock_download, sample_excel_file: Path
-):
+def test_extract_data_uses_downloader_and_parser():
     """
-    Test that extract_data correctly downloads and parses the sample Excel file.
+    Tests that extract_data correctly orchestrates the downloader and parser modules.
     """
-    # Arrange: Mock the downloader to return an in-memory stream of our local sample file
-    with open(sample_excel_file, "rb") as f:
-        mock_download.return_value = io.BytesIO(f.read())
+    settings = Settings()
+    # We use mock context managers to patch the dependencies of the extract_data function
+    with patch("py_load_epar.etl.extract.download_excel_file") as mock_download, \
+         patch("py_load_epar.etl.extract.parse_ema_excel_file") as mock_parse, \
+         patch("py_load_epar.etl.extract.shutil.rmtree") as mock_rmtree:
 
-    settings = Settings()  # Create a dummy settings object
+        # --- Arrange ---
+        # Configure the mocks to return dummy values
+        fake_file_path = Path("/tmp/fake_dir/fake_file.xlsx")
+        mock_download.return_value = fake_file_path
+        # The parser mock yields an empty iterator to prevent processing loops
+        mock_parse.return_value = iter([])
 
-    # Act: Call the extract_data function and consume the iterator
-    records_iterator = extract_data(settings=settings)
-    records = list(records_iterator)
+        # --- Act ---
+        # Consume the iterator from extract_data to ensure the code runs
+        list(extract_data(settings=settings))
 
-    # Assert: Check that the data was parsed as expected
-    assert len(records) == 2
+        # --- Assert ---
+        # Check that the downloader was called with the correct URL
+        mock_download.assert_called_once()
+        assert mock_download.call_args[1]['url'] == settings.api.ema_file_url
 
-    # The caller is now responsible for determining the high water mark
-    new_hwm = max(r["last_update_date_source"] for r in records)
-    assert new_hwm.day == 15
-    assert new_hwm.month == 2
+        # Check that the parser was called with the path returned by the downloader
+        mock_parse.assert_called_once_with(fake_file_path)
 
-    # Check the first record
-    record1 = records[0]
-    assert record1["medicine_name"] == "TestMed1"
-    assert record1["authorization_status"] == "Authorised"
-    assert record1["marketing_authorization_holder_raw"] == "Test Pharma 1"
-    assert record1["source_url"] == "http://example.com/doc1.pdf"
-    assert record1["last_update_date_source"] == datetime.datetime(2024, 1, 25, 0, 0)
+        # Check that the temporary directory is cleaned up
+        mock_rmtree.assert_called_once()
 
-    # Check the second record
-    record2 = records[1]
-    assert record2["medicine_name"] == "TestMed2"
-    assert record2["orphan_medicine"] == "Yes"
-    assert record2["source_url"] == "http://example.com/doc2.pdf"
 
-    # Assert that the downloader was called
-    mock_download.assert_called_once()
+def test_extract_data_filters_by_high_water_mark():
+    """
+    Tests the CDC (Change Data Capture) logic of extract_data, ensuring it
+    correctly filters out records that are not newer than the high_water_mark.
+    """
+    settings = Settings()
+    # Records with a date on or before the HWM should be filtered out
+    high_water_mark = datetime.datetime(2024, 2, 15)
+
+    with patch("py_load_epar.etl.extract.download_excel_file"), \
+         patch("py_load_epar.etl.extract.parse_ema_excel_file") as mock_parse:
+
+        # Arrange: Mock the parser to return a list of records with various dates
+        mock_parse.return_value = iter([
+            {"medicine_name": "OldMed", "revision_date": datetime.date(2024, 1, 15)},
+            {"medicine_name": "SameDayMed", "revision_date": datetime.date(2024, 2, 15)},
+            {"medicine_name": "NewMed", "revision_date": datetime.date(2024, 2, 16)},
+        ])
+
+        # Act: Call the function and get the list of processed records
+        records = list(extract_data(settings=settings, high_water_mark=high_water_mark))
+
+        # Assert: Only the record with a date after the HWM should be yielded
+        assert len(records) == 1
+        assert records[0]["medicine_name"] == "NewMed"
+        assert records[0]["last_update_date_source"] == datetime.date(2024, 2, 16)
