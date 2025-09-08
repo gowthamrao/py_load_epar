@@ -1,5 +1,6 @@
 import hashlib
 import logging
+import re
 from typing import Any, Dict, Iterator, List, Tuple
 
 from pydantic import ValidationError
@@ -38,16 +39,15 @@ def transform_and_validate(
 
     for i, raw_record in enumerate(raw_records):
         try:
-            # TODO: The source data does not have a clear, stable unique ID.
-            # We are generating a synthetic one using a hash. This should be
-            # replaced with a proper source ID field if one becomes available.
-            med_name = raw_record.get("medicine_name", "")
-            mah_name = raw_record.get("marketing_authorization_holder_raw", "")
-            if not med_name or not mah_name:
-                raise ValueError("Missing medicine_name or marketing_authorization_holder_raw")
-
-            id_string = f"{med_name}-{mah_name}"
-            raw_record["epar_id"] = hashlib.sha1(id_string.encode()).hexdigest()[:20]
+            # Use the 'product_number' field from the source data as the stable unique ID.
+            # This is based on the hint in the FRD's schema.sql.
+            product_number = raw_record.get("product_number")
+            if not product_number:
+                raise ValueError(
+                    "Record is missing a 'product_number', which is required for the "
+                    "stable unique identifier (epar_id)."
+                )
+            raw_record["epar_id"] = str(product_number)
             raw_record["etl_execution_id"] = execution_id
 
             # 1. Validate the base record
@@ -65,9 +65,13 @@ def transform_and_validate(
 
             # 3. Enrich Substances
             if validated_model.active_substance_raw:
-                # Simple split, can be improved with better parsing
-                substance_names = [s.strip() for s in validated_model.active_substance_raw.split(',')]
-                for sub_name in substance_names:
+                # Split substances on commas, semicolons, or 'and'
+                # This is more robust than a simple comma-split.
+                substance_names = re.split(
+                    r"[,;]|\s+and\s+", validated_model.active_substance_raw
+                )
+                for sub_name_raw in substance_names:
+                    sub_name = sub_name_raw.strip()
                     if not sub_name:
                         continue
                     substance = spor_client.search_substance(sub_name)
