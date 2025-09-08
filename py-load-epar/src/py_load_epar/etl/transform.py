@@ -50,11 +50,24 @@ def transform_and_validate(
             raw_record["epar_id"] = str(product_number)
             raw_record["etl_execution_id"] = execution_id
 
-            # 1. Validate the base record
+            # 1. Validate the base record and perform initial transformations
             validated_model = EparIndex.model_validate(raw_record)
             substance_links = []
 
-            # 2. Enrich Organisation (MAH)
+            # 2. Implement soft-delete logic for withdrawn/suspended medicines
+            # The FRD requires that withdrawn authorizations are handled as soft deletes.
+            withdrawn_statuses = ["withdrawn", "suspended"]
+            if any(
+                status in validated_model.authorization_status.lower()
+                for status in withdrawn_statuses
+            ):
+                validated_model.is_active = False
+                logger.debug(
+                    f"Marking EPAR '{validated_model.epar_id}' as inactive due to "
+                    f"status: {validated_model.authorization_status}"
+                )
+
+            # 3. Enrich Organisation (MAH)
             if validated_model.marketing_authorization_holder_raw:
                 org = spor_client.search_organisation(
                     validated_model.marketing_authorization_holder_raw
@@ -63,7 +76,7 @@ def transform_and_validate(
                     validated_model.mah_oms_id = org.org_id
                     logger.debug(f"Enriched MAH '{org.name}' with OMS ID {org.org_id}")
 
-            # 3. Enrich Substances
+            # 4. Enrich Substances and create link records
             if validated_model.active_substance_raw:
                 # Split substances on commas, semicolons, or 'and'
                 # This is more robust than a simple comma-split.
