@@ -13,6 +13,8 @@ from py_load_epar.db.factory import get_db_adapter
 from py_load_epar.db.interfaces import IDatabaseAdapter
 from py_load_epar.etl.downloader import download_document_and_hash
 from py_load_epar.etl.extract import extract_data
+from py_load_epar.storage.factory import StorageFactory
+from py_load_epar.storage.interfaces import IStorage
 from py_load_epar.etl.transform import transform_and_validate
 from py_load_epar.models import EparDocument, EparIndex, EparSubstanceLink
 from py_load_epar.spor_api.client import SporApiClient
@@ -63,7 +65,7 @@ def _process_substance_links(
 def _process_documents(
     adapter: IDatabaseAdapter,
     processed_records: List[EparIndex],
-    document_storage_path: Path,
+    storage: IStorage,
 ) -> int:
     """
     Downloads, hashes, and loads metadata for associated documents.
@@ -113,8 +115,8 @@ def _process_documents(
                     )
 
                     # 5. Download the document
-                    storage_path, file_hash = download_document_and_hash(
-                        doc_url, document_storage_path
+                    storage_uri, file_hash = download_document_and_hash(
+                        url=doc_url, storage=storage
                     )
 
                     # 6. Create the EparDocument record
@@ -124,7 +126,7 @@ def _process_documents(
                         document_type=link_text,  # Use the link text as the doc type
                         language_code="en",  # Assuming 'en', might need refinement
                         source_url=doc_url,
-                        storage_location=str(storage_path),
+                        storage_location=storage_uri,
                         file_hash=file_hash,
                         download_timestamp=datetime.datetime.now(
                             datetime.timezone.utc
@@ -182,6 +184,7 @@ def run_etl(settings: Settings) -> None:
     logger.info(f"Starting ETL run with strategy: {settings.etl.load_strategy}")
     adapter = get_db_adapter(settings)
     spor_client = SporApiClient(settings.spor_api)
+    storage = StorageFactory(settings.storage).get_storage()
     execution_id = None
 
     try:
@@ -212,7 +215,6 @@ def run_etl(settings: Settings) -> None:
 
         # 4. Process data in batches
         total_loaded_count = 0
-        doc_path = Path(settings.etl.document_storage_path)
         new_high_water_mark = high_water_mark
 
         for i, batch in enumerate(batches):
@@ -244,7 +246,9 @@ def run_etl(settings: Settings) -> None:
                 link for sublist in substance_links for link in sublist
             ]
             _process_substance_links(adapter, flat_substance_links)
-            _process_documents(adapter, list(epar_records), doc_path)
+            _process_documents(
+                adapter=adapter, processed_records=list(epar_records), storage=storage
+            )
 
         # 5. Finalize the main table load
         logger.info("Finalizing load for epar_index table.")

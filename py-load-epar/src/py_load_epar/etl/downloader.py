@@ -1,12 +1,13 @@
 import hashlib
 import io
 import logging
-import tempfile
 from pathlib import Path
 from typing import IO, Tuple
 
 import requests
 from tenacity import retry, stop_after_attempt, wait_exponential
+
+from py_load_epar.storage.interfaces import IStorage
 
 logger = logging.getLogger(__name__)
 
@@ -55,65 +56,44 @@ def download_file_to_memory(url: str) -> io.BytesIO:
     return memory_file
 
 
-def download_excel_file(
-    url: str, destination_folder: Path | str | None = None
-) -> Path:
-    """
-    Downloads the main EMA Excel file and saves it to a specified location.
-
-    Args:
-        url: The URL of the Excel file.
-        destination_folder: The folder to save the file in. If None, a temporary
-                            folder is created.
-
-    Returns:
-        The path to the downloaded file.
-    """
-    if destination_folder:
-        Path(destination_folder).mkdir(parents=True, exist_ok=True)
-        destination_path = Path(destination_folder) / "ema_data.xlsx"
-    else:
-        temp_dir = tempfile.mkdtemp(prefix="py_load_epar_")
-        destination_path = Path(temp_dir) / "ema_data.xlsx"
-
-    with open(destination_path, "wb") as f:
-        _download_file_to_stream(url, f)
-
-    logger.info(f"Successfully downloaded Excel file to: {destination_path}")
-    return destination_path
-
-
 def download_document_and_hash(
-    url: str, destination_folder: Path
-) -> Tuple[Path, str]:
+    url: str, storage: IStorage, object_name_prefix: str = "documents"
+) -> Tuple[str, str]:
     """
-    Downloads a document, saves it, and calculates its SHA-256 hash.
+    Downloads a document to memory, calculates its hash, and saves it via a
+    storage adapter.
 
-    The file is saved using its URL's filename.
+    The object name is derived from the URL's filename.
 
     Args:
         url: The URL of the document to download.
-        destination_folder: The root folder for storing documents.
+        storage: An instance of a storage adapter (e.g., LocalStorage, S3Storage).
+        object_name_prefix: A prefix for the object name in the storage backend.
 
     Returns:
-        A tuple containing the path to the saved file and its SHA-256 hash.
+        A tuple containing the storage URI of the saved file and its SHA-256 hash.
     """
     hasher = hashlib.sha256()
     filename = url.split("/")[-1] or "downloaded_document"
-    destination_path = destination_folder / filename
+    object_name = f"{object_name_prefix}/{filename}"
 
-    destination_folder.mkdir(parents=True, exist_ok=True)
+    # 1. Download the file into an in-memory stream
+    memory_file = download_file_to_memory(url)
 
-    with open(destination_path, "wb") as f:
-        _download_file_to_stream(url, f)
-
-    # Re-open the file to calculate the hash
-    with open(destination_path, "rb") as f:
-        for chunk in iter(lambda: f.read(4096), b""):
-            hasher.update(chunk)
-
+    # 2. Calculate the hash from the in-memory stream
+    # Iterate over the stream in chunks to avoid loading the whole file into memory again
+    memory_file.seek(0)
+    for chunk in iter(lambda: memory_file.read(4096), b""):
+        hasher.update(chunk)
     file_hash = hasher.hexdigest()
+
+    # Rewind the stream again before passing it to the storage adapter
+    memory_file.seek(0)
+
+    # 3. Use the storage adapter to save the file
+    storage_uri = storage.save(data_stream=memory_file, object_name=object_name)
+
     logger.info(
-        f"Successfully downloaded document to {destination_path} with hash {file_hash}"
+        f"Processed document from {url}, stored at {storage_uri} with hash {file_hash}"
     )
-    return destination_path, file_hash
+    return storage_uri, file_hash

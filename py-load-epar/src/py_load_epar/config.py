@@ -52,13 +52,23 @@ class ApiSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="PY_LOAD_EPAR_API_")
 
 
+class StorageSettings(BaseSettings):
+    """Models settings for document storage."""
+
+    backend: str = "local"  # 'local' or 's3'
+    local_storage_path: str = "epar_documents"
+    s3_bucket: Optional[str] = None
+    s3_region: Optional[str] = None
+
+    model_config = SettingsConfigDict(env_prefix="PY_LOAD_EPAR_STORAGE_")
+
+
 class EtlSettings(BaseSettings):
     """Models settings for the ETL process."""
 
     load_strategy: str = "DELTA"  # or "FULL"
     batch_size: int = 1000
     max_retries: int = 5
-    document_storage_path: str = "epar_documents"
 
     model_config = SettingsConfigDict(env_prefix="PY_LOAD_EPAR_ETL_")
 
@@ -70,6 +80,7 @@ class Settings(BaseSettings):
     api: ApiSettings = ApiSettings()
     etl: EtlSettings = EtlSettings()
     spor_api: SporApiSettings = SporApiSettings()
+    storage: StorageSettings = StorageSettings()
 
     # Optional path to a YAML config file
     config_path: Optional[str] = None
@@ -104,6 +115,8 @@ class Settings(BaseSettings):
             self.etl = self.etl.model_copy(update=yaml_config["etl"])
         if "spor_api" in yaml_config:
             self.spor_api = self.spor_api.model_copy(update=yaml_config["spor_api"])
+        if "storage" in yaml_config:
+            self.storage = self.storage.model_copy(update=yaml_config["storage"])
 
     model_config = SettingsConfigDict(env_nested_delimiter="__")
 
