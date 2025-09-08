@@ -65,7 +65,8 @@ def test_full_etl_run_with_enrichment_and_soft_delete(
 
     # Mock the download function to return our local test file
     mocker.patch(
-        "py_load_epar.etl.extract.download_excel_file", return_value=sample_excel_file
+        "py_load_epar.etl.extract.download_file_to_memory",
+        return_value=sample_excel_file.open("rb"),
     )
 
     # Mock the SPOR API client
@@ -146,3 +147,82 @@ def test_full_etl_run_with_enrichment_and_soft_delete(
         )
         substance_ids = [row[0] for row in cursor.fetchall()]
         assert sorted(substance_ids) == ["sms-ghi", "sms-jkl"]
+
+
+def test_document_processing_and_retry(
+    postgres_adapter: PostgresAdapter,
+    db_settings: Settings,
+    mocker,
+    requests_mock,
+    sample_excel_file: Path,
+):
+    """
+    Tests the document processing part of the ETL, including the retry mechanism
+    for fetching the HTML page.
+
+    This test verifies:
+    1. The orchestrator attempts to fetch an EPAR summary page.
+    2. The retry logic in `_fetch_html_with_retry` is triggered on HTTP failure.
+    3. A document link is parsed from the HTML.
+    4. The document is downloaded and stored.
+    5. A corresponding record is created in the `epar_documents` table.
+    """
+    # --- 1. Mock external dependencies ---
+    mocker.patch(
+        "py_load_epar.etl.extract.download_file_to_memory",
+        return_value=sample_excel_file.open("rb"),
+    )
+
+    # Mock the SPOR API to return nothing to simplify the test
+    mock_spor_client = MagicMock()
+    mock_spor_client.search_organisation.return_value = None
+    mock_spor_client.search_substance.return_value = None
+    mocker.patch(
+        "py_load_epar.etl.orchestrator.SporApiClient", return_value=mock_spor_client
+    )
+
+    # Mock the HTTP requests for the document processing part
+    epar_page_url = "http://example.com/3"
+    pdf_url = "http://example.com/path/to/document.pdf"
+
+    # The HTML page will fail twice, then succeed.
+    requests_mock.get(
+        epar_page_url,
+        [
+            {"status_code": 503, "text": "Service Unavailable"},
+            {"status_code": 503, "text": "Service Unavailable"},
+            {
+                "status_code": 200,
+                "text": f'<html><body><a href="{pdf_url}">Public Assessment Report</a></body></html>',
+            },
+        ],
+    )
+    # The PDF download will succeed on the first try.
+    requests_mock.get(pdf_url, text="dummy pdf content")
+
+    # --- 2. Run the ETL process ---
+    # We only care about the record that has a URL we can test against
+    settings = db_settings
+    settings.etl.load_strategy = "FULL"
+    run_etl(settings)
+
+    # --- 3. Assertions ---
+    # Assert that the retry logic was triggered
+    history = requests_mock.request_history
+    assert requests_mock.call_count == 4  # 3 for the page, 1 for the PDF
+    assert len([h for h in history if h.url == epar_page_url]) == 3
+
+    # Assert that the document was saved to the database
+    with postgres_adapter.conn.cursor() as cursor:
+        cursor.execute("SELECT COUNT(*) FROM epar_documents")
+        assert cursor.fetchone()[0] == 1
+
+        cursor.execute(
+            "SELECT epar_id, source_url, file_hash, storage_location FROM epar_documents"
+        )
+        (epar_id, source_url, file_hash, storage_location) = cursor.fetchone()
+        assert epar_id == "EMA/3"
+        assert source_url == pdf_url
+        assert file_hash == "8e7529348239923a85814a04918ded3c67535728153454378878342410a72c21"
+        assert storage_location is not None
+        assert "document.pdf" in storage_location
