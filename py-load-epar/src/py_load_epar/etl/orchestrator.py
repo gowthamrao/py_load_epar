@@ -3,6 +3,10 @@ import logging
 import uuid
 from pathlib import Path
 from typing import Iterator, List, Tuple, TypeVar
+from urllib.parse import urljoin
+
+import requests
+from bs4 import BeautifulSoup
 
 from py_load_epar.config import Settings
 from py_load_epar.db.factory import get_db_adapter
@@ -61,37 +65,94 @@ def _process_documents(
     processed_records: List[EparIndex],
     document_storage_path: Path,
 ) -> int:
-    """Download, hash, and load metadata for associated documents."""
-    logger.info("Starting document processing.")
+    """
+    Downloads, hashes, and loads metadata for associated documents.
+    It fetches the EPAR summary page, parses the HTML to find links to
+    relevant documents (e.g., Public Assessment Report), and then downloads them.
+    """
+    logger.info("Starting document processing and HTML parsing.")
     document_records = []
+    # Define keywords to identify relevant documents
+    DOCUMENT_KEYWORDS = [
+        "public assessment report",
+        "smpc",
+        "product information",
+        "package leaflet",
+        "epar",
+    ]
+
     for record in processed_records:
         if not record.source_url or not record.source_url.startswith("http"):
             continue
 
         try:
-            storage_path, file_hash = download_document_and_hash(
-                record.source_url, document_storage_path
+            # 1. Fetch the HTML of the EPAR summary page
+            logger.debug(f"Fetching EPAR page: {record.source_url}")
+            response = requests.get(record.source_url, timeout=30)
+            response.raise_for_status()
+
+            # 2. Parse the HTML
+            soup = BeautifulSoup(response.content, "html.parser")
+
+            # 3. Find and process all relevant document links
+            links = soup.find_all("a", href=True)
+            found_docs_for_record = False
+            for link in links:
+                link_text = link.get_text(strip=True).lower()
+                href = link["href"]
+
+                # Check if link text contains keywords and points to a PDF
+                if any(
+                    keyword in link_text for keyword in DOCUMENT_KEYWORDS
+                ) and href.lower().endswith(".pdf"):
+                    # 4. Construct the full URL for the document
+                    doc_url = urljoin(record.source_url, href)
+
+                    logger.info(
+                        f"Found document '{link_text}' at {doc_url} for EPAR {record.epar_id}"
+                    )
+
+                    # 5. Download the document
+                    storage_path, file_hash = download_document_and_hash(
+                        doc_url, document_storage_path
+                    )
+
+                    # 6. Create the EparDocument record
+                    doc = EparDocument(
+                        document_id=uuid.uuid4(),
+                        epar_id=record.epar_id,
+                        document_type=link_text,  # Use the link text as the doc type
+                        language_code="en",  # Assuming 'en', might need refinement
+                        source_url=doc_url,
+                        storage_location=str(storage_path),
+                        file_hash=file_hash,
+                        download_timestamp=datetime.datetime.now(
+                            datetime.timezone.utc
+                        ),
+                    )
+                    document_records.append(doc)
+                    found_docs_for_record = True
+
+            if not found_docs_for_record:
+                logger.warning(
+                    "Could not find any downloadable PDF documents on page: "
+                    f"{record.source_url}"
+                )
+
+        except requests.exceptions.RequestException as e:
+            logger.error(
+                f"Failed to fetch HTML for EPAR page {record.source_url}: {e}"
             )
-            doc = EparDocument(
-                document_id=uuid.uuid4(),
-                epar_id=record.epar_id,
-                document_type="EPAR",  # Assuming a default type
-                language_code="en",  # Assuming a default
-                source_url=record.source_url,
-                storage_location=str(storage_path),
-                file_hash=file_hash,
-                download_timestamp=datetime.datetime.now(datetime.timezone.utc),
-            )
-            document_records.append(doc)
+            continue
         except Exception as e:
             logger.error(
-                f"Failed to download or process document for {record.epar_id} "
+                f"An unexpected error occurred while processing documents for EPAR {record.epar_id} "
                 f"from {record.source_url}: {e}"
             )
             continue
 
     if not document_records:
-        logger.info("No documents to process.")
+        logger.info("No new documents were found or processed.")
         return 0
 
     # Load the document metadata into the database

@@ -67,9 +67,16 @@ def extract_data(
 
             # Rename keys from parser output to match Pydantic model fields
             if "marketing_authorisation_holder_company_name" in record:
-                record["marketing_authorization_holder_raw"] = record.pop("marketing_authorisation_holder_company_name")
+                record["marketing_authorization_holder_raw"] = record.pop(
+                    "marketing_authorisation_holder_company_name"
+                )
             if "active_substance" in record:
                 record["active_substance_raw"] = record.pop("active_substance")
+
+            # The 'URL' column from the sheet is snake_cased to 'url' by the parser.
+            # We map it to the 'source_url' field in our Pydantic model.
+            if "url" in record:
+                record["source_url"] = record.pop("url")
 
             # --- CDC Filter ---
             if high_water_mark and record_date <= high_water_mark.date():
