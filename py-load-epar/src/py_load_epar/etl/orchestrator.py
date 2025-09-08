@@ -7,6 +7,7 @@ from urllib.parse import urljoin
 
 import requests
 from bs4 import BeautifulSoup
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from py_load_epar.config import Settings
 from py_load_epar.db.factory import get_db_adapter
@@ -62,6 +63,25 @@ def _process_substance_links(
     return loaded_count
 
 
+@retry(
+    wait=wait_exponential(multiplier=1, min=4, max=10),
+    stop=stop_after_attempt(5),
+    reraise=True,
+)
+def _fetch_html_with_retry(url: str) -> bytes:
+    """
+    Fetches HTML content from a URL with a robust retry mechanism.
+    """
+    logger.debug(f"Fetching EPAR page: {url}")
+    try:
+        response = requests.get(url, timeout=30)
+        response.raise_for_status()
+        return response.content
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Failed to fetch HTML from {url}: {e}")
+        raise
+
+
 def _process_documents(
     adapter: IDatabaseAdapter,
     processed_records: List[EparIndex],
@@ -88,13 +108,11 @@ def _process_documents(
             continue
 
         try:
-            # 1. Fetch the HTML of the EPAR summary page
-            logger.debug(f"Fetching EPAR page: {record.source_url}")
-            response = requests.get(record.source_url, timeout=30)
-            response.raise_for_status()
+            # 1. Fetch the HTML of the EPAR summary page with retry
+            html_content = _fetch_html_with_retry(record.source_url)
 
             # 2. Parse the HTML
-            soup = BeautifulSoup(response.content, "html.parser")
+            soup = BeautifulSoup(html_content, "html.parser")
 
             # 3. Find and process all relevant document links
             links = soup.find_all("a", href=True)
