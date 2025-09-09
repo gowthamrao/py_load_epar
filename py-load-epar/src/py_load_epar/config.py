@@ -40,18 +40,6 @@ class SporApiSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="PY_LOAD_EPAR_SPOR_")
 
 
-class ApiSettings(BaseSettings):
-    """Models settings for external APIs."""
-
-    ema_base_url: str = "https://www.ema.europa.eu"
-    ema_file_url: str = Field(
-        default="https://www.ema.europa.eu/en/documents/report/medicines-output-medicines-report_en.xlsx",
-        description="URL to the main EMA EPAR index file (Excel/CSV).",
-    )
-
-    model_config = SettingsConfigDict(env_prefix="PY_LOAD_EPAR_API_")
-
-
 class StorageSettings(BaseSettings):
     """Models settings for document storage."""
 
@@ -69,6 +57,10 @@ class EtlSettings(BaseSettings):
     load_strategy: str = "DELTA"  # or "FULL"
     batch_size: int = 1000
     max_retries: int = 5
+    epar_data_url: str = Field(
+        default="https://www.ema.europa.eu/en/documents/report/medicines-output-medicines-report_en.xlsx",
+        description="URL to the main EMA EPAR index file (Excel/CSV).",
+    )
 
     model_config = SettingsConfigDict(env_prefix="PY_LOAD_EPAR_ETL_")
 
@@ -77,7 +69,6 @@ class Settings(BaseSettings):
     """Main settings container."""
 
     db: DatabaseSettings = DatabaseSettings()
-    api: ApiSettings = ApiSettings()
     etl: EtlSettings = EtlSettings()
     spor_api: SporApiSettings = SporApiSettings()
     storage: StorageSettings = StorageSettings()
@@ -109,8 +100,6 @@ class Settings(BaseSettings):
         # Update nested settings models
         if "db" in yaml_config:
             self.db = self.db.model_copy(update=yaml_config["db"])
-        if "api" in yaml_config:
-            self.api = self.api.model_copy(update=yaml_config["api"])
         if "etl" in yaml_config:
             self.etl = self.etl.model_copy(update=yaml_config["etl"])
         if "spor_api" in yaml_config:

@@ -34,7 +34,7 @@ def extract_data(
         logger.info(f"Using high water mark for CDC: {high_water_mark.isoformat()}")
 
     # 1. Download the file into an in-memory stream
-    excel_file_stream = download_file_to_memory(url=settings.api.ema_file_url)
+    excel_file_stream = download_file_to_memory(url=settings.etl.epar_data_url)
 
     # 2. Parse the stream directly
     raw_records_iterator = parse_ema_excel_file(excel_file_stream)
