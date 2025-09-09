@@ -1,6 +1,7 @@
 import logging
+import re
 from pathlib import Path
-from typing import Any, Dict, Iterator
+from typing import IO, Any, Dict, Iterator, Union
 
 import openpyxl
 
@@ -12,7 +13,6 @@ def _snake_case(s: str) -> str:
     Converts a string to a valid snake_case identifier.
     Example: 'Marketing Authorisation Holder' -> 'marketing_authorisation_holder'.
     """
-    import re
     if not isinstance(s, str):
         return ""
     # Replace known separators with underscore
@@ -22,9 +22,6 @@ def _snake_case(s: str) -> str:
     # Remove any characters that are not alphanumeric or underscore
     s = re.sub(r"[^a-zA-Z0-9_]", "", s)
     return s.lower()
-
-
-from typing import IO, Union
 
 
 def parse_ema_excel_file(

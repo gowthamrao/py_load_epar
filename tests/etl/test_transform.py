@@ -2,7 +2,6 @@ import logging
 from typing import Any, Dict, List
 from unittest.mock import MagicMock
 
-import pytest
 from py_load_epar.etl.transform import transform_and_validate
 from py_load_epar.models import EparIndex
 from py_load_epar.spor_api.client import SporApiClient

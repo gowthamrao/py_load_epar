@@ -291,7 +291,8 @@ class PostgresAdapter(IDatabaseAdapter):
             execution_id = cursor.fetchone()[0]
             self.conn.commit()
             logger.info(
-                f"Logged pipeline start for execution_id {execution_id} with strategy {load_strategy}."
+                f"Logged pipeline start for execution_id {execution_id} "
+                f"with strategy {load_strategy}."
             )
             return execution_id
 
@@ -343,7 +344,7 @@ class PostgresAdapter(IDatabaseAdapter):
                 (datetime.datetime.now(datetime.timezone.utc), execution_id),
             )
             self.conn.commit()
-            logger.error(f"Successfully logged failure for execution_id {execution_id}.")
+            logger.error(f"Failure logged for execution_id {execution_id}.")
 
 
 class StreamingIteratorIO(io.IOBase):

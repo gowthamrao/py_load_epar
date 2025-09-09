@@ -1,8 +1,8 @@
+
 import pytest
 import requests_mock
-from unittest.mock import MagicMock
 
-from py_load_epar.config import SporApiSettings, Settings
+from py_load_epar.config import SporApiSettings
 from py_load_epar.spor_api.client import SporApiClient
 from py_load_epar.spor_api.models import SporOmsOrganisation
 

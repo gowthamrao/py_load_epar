@@ -1,12 +1,20 @@
 [project]
 name = "py-load-epar"
 version = "0.1.0"
-description = ""
+description = "A package to load EPAR data from the European Medicines Agency (EMA)."
 authors = [
-    {name = "google-labs-jules[bot]",email = "161369871+google-labs-jules[bot]@users.noreply.github.com"}
+    {name = "Gowtham Rao",email = "rao@ohdsi.org"}
 ]
 readme = "README.md"
 requires-python = ">=3.12"
+license = {text = "MIT"}
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+]
 
 [tool.poetry]
 packages = [{include = "py_load_epar", from = "src"}]
@@ -47,6 +55,8 @@ markers = ["integration"]
 
 [tool.ruff]
 line-length = 88
+
+[tool.ruff.lint]
 select = ["E", "F", "W", "I", "C90"]
 
 [tool.black]
