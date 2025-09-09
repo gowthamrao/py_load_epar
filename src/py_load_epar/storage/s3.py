@@ -39,7 +39,9 @@ class S3Storage(IStorage):
         Raises:
             IOError: If the upload fails due to a client error.
         """
-        logger.info(f"Attempting to upload to S3: s3://{self.bucket_name}/{object_name}")
+        logger.info(
+            f"Attempting to upload to S3: s3://{self.bucket_name}/{object_name}"
+        )
         try:
             # Reset stream position to the beginning
             data_stream.seek(0)

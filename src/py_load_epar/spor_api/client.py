@@ -81,9 +81,7 @@ class SporApiClient:
             logger.warning(f"Request to {url} failed: {e}. Retrying...")
             raise
 
-    def search_organisation(
-        self, name: str
-    ) -> Optional[SporOmsOrganisation]:
+    def search_organisation(self, name: str) -> Optional[SporOmsOrganisation]:
         """
         Searches for an organisation by name in the SPOR OMS.
         Returns the first result if a high-confidence match is found.
@@ -116,8 +114,7 @@ class SporApiClient:
 
         except requests.exceptions.RequestException as e:
             logger.error(
-                f"Failed to search for organisation '{name}' after "
-                f"retries: {e}"
+                f"Failed to search for organisation '{name}' after " f"retries: {e}"
             )
             return None
 

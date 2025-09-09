@@ -112,9 +112,7 @@ def _process_substances(adapter: IDatabaseAdapter, substances: List[Substance]) 
     model = Substance
     columns = list(model.model_fields.keys())
     # Dedup
-    unique_substances = {
-        sub.spor_substance_id: sub for sub in substances
-    }.values()
+    unique_substances = {sub.spor_substance_id: sub for sub in substances}.values()
     data_iterator = (
         tuple(record.model_dump(include=columns).values())
         for record in unique_substances
@@ -217,9 +215,7 @@ def _process_documents(
                         source_url=doc_url,
                         storage_location=storage_uri,
                         file_hash=file_hash,
-                        download_timestamp=datetime.datetime.now(
-                            datetime.timezone.utc
-                        ),
+                        download_timestamp=datetime.datetime.now(datetime.timezone.utc),
                     )
                     document_records.append(doc)
                     found_docs_for_record = True
@@ -231,9 +227,7 @@ def _process_documents(
                 )
 
         except requests.exceptions.RequestException as e:
-            logger.error(
-                f"Failed to fetch HTML for EPAR page {record.source_url}: {e}"
-            )
+            logger.error(f"Failed to fetch HTML for EPAR page {record.source_url}: {e}")
             continue
         except Exception as e:
             logger.error(
@@ -375,9 +369,7 @@ def run_etl(settings: Settings) -> None:
         )
 
         # 6. Process documents now that epar_index is populated
-        logger.info(
-            f"Processing docs for {len(all_epar_records)} EPAR records."
-        )
+        logger.info(f"Processing docs for {len(all_epar_records)} EPAR records.")
         _process_documents(
             adapter=adapter, processed_records=all_epar_records, storage=storage
         )
