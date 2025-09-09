@@ -91,7 +91,7 @@ def test_transform_and_validate_quarantines_invalid_records(caplog):
     assert len(caplog.records) == 2
     # Check log for missing product_number
     assert "Record 1" in caplog.text
-    assert "missing a 'product_number'" in caplog.text
+    assert "Record is missing 'product_number'" in caplog.text
     # Check log for Pydantic validation error
     assert "Record 2" in caplog.text
     assert "failed validation" in caplog.text
@@ -123,7 +123,7 @@ def test_transform_and_validate_enrichment():
 
     # Act
     results = list(transform_and_validate(iter(raw_records), mock_spor_client, 1))
-    epar_record, substance_links = results[0]
+    epar_record, substance_links, orgs, subs = results[0]
 
     # Assert
     # Check that the client was called with the correct parameters
@@ -140,6 +140,12 @@ def test_transform_and_validate_enrichment():
     assert len(substance_links) == 2  # Both calls return the same mock
     assert substance_links[0].spor_substance_id == "SUB-456"
     assert substance_links[0].epar_id == epar_record.epar_id
+
+    # Check that master data was captured
+    assert len(orgs) == 1
+    assert orgs[0].oms_id == "ORG-123"
+    assert len(subs) == 2
+    assert subs[0].spor_substance_id == "SUB-456"
 
 
 def test_transform_handles_complex_substances():
@@ -165,9 +171,11 @@ def test_transform_handles_complex_substances():
 
     # Act
     results = list(transform_and_validate(iter(raw_records), mock_spor_client, 1))
-    _, substance_links = results[0]
+    _, substance_links, _, subs = results[0]
 
     # Assert
+    assert len(substance_links) == 4
+    assert len(subs) == 4
     assert mock_spor_client.search_substance.call_count == 4
     # Verify that the client was called with the correctly parsed & stripped names
     mock_spor_client.search_substance.assert_any_call("SubstanceA")

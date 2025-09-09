@@ -4,7 +4,12 @@ from typing import Any, Dict, Iterator, List, Tuple
 
 from pydantic import ValidationError
 
-from py_load_epar.models import EparIndex, EparSubstanceLink
+from py_load_epar.models import (
+    EparIndex,
+    EparSubstanceLink,
+    Organization,
+    Substance,
+)
 from py_load_epar.spor_api.client import SporApiClient
 
 logger = logging.getLogger(__name__)
@@ -14,7 +19,7 @@ def transform_and_validate(
     raw_records: Iterator[Dict[str, Any]],
     spor_client: SporApiClient,
     execution_id: int,
-) -> Iterator[Tuple[EparIndex, List[EparSubstanceLink]]]:
+) -> Iterator[Tuple[EparIndex, List[EparSubstanceLink], List[Organization], List[Substance]]]:
     """
     Transforms raw data, validates it, and enriches it with SPOR API data.
 
@@ -22,15 +27,20 @@ def transform_and_validate(
     - Generates a stable `epar_id`.
     - Enriches organisation data using SPOR OMS.
     - Enriches substance data using SPOR SMS and creates link table records.
+    - Captures the discovered master data (Organisations, Substances) to be loaded.
     - Records that fail validation are logged and skipped (quarantined).
 
     Args:
         raw_records: An iterator yielding dictionaries of raw EPAR data.
         spor_client: An instance of the SporApiClient for enrichment.
+        execution_id: The current pipeline execution ID.
 
     Yields:
-        A tuple containing the enriched EparIndex Pydantic model instance
-        and a list of EparSubstanceLink instances for that EPAR.
+        A tuple containing:
+        - The enriched EparIndex Pydantic model instance.
+        - A list of EparSubstanceLink instances for that EPAR.
+        - A list of discovered Organization models to be loaded.
+        - A list of discovered Substance models to be loaded.
     """
     logger.info("Starting data transformation, validation, and enrichment.")
     validated_count = 0
@@ -39,46 +49,44 @@ def transform_and_validate(
     for i, raw_record in enumerate(raw_records):
         try:
             # Use the 'product_number' field from the source data as the stable unique ID.
-            # This is based on the hint in the FRD's schema.sql.
             product_number = raw_record.get("product_number")
             if not product_number:
                 raise ValueError(
-                    "Record is missing a 'product_number', which is required for the "
-                    "stable unique identifier (epar_id)."
+                    "Record is missing 'product_number', required for the stable ID."
                 )
             raw_record["epar_id"] = str(product_number)
             raw_record["etl_execution_id"] = execution_id
 
-            # 1. Validate the base record and perform initial transformations
+            # 1. Validate the base record
             validated_model = EparIndex.model_validate(raw_record)
-            substance_links = []
+            substance_links: List[EparSubstanceLink] = []
+            organizations: List[Organization] = []
+            substances: List[Substance] = []
 
-            # 2. Implement soft-delete logic for withdrawn/suspended medicines
-            # The FRD requires that withdrawn authorizations are handled as soft deletes.
+            # 2. Handle soft-deletes for withdrawn medicines
             withdrawn_statuses = ["withdrawn", "suspended"]
             if any(
                 status in validated_model.authorization_status.lower()
                 for status in withdrawn_statuses
             ):
                 validated_model.is_active = False
-                logger.debug(
-                    f"Marking EPAR '{validated_model.epar_id}' as inactive due to "
-                    f"status: {validated_model.authorization_status}"
-                )
 
-            # 3. Enrich Organisation (MAH)
+            # 3. Enrich Organisation (MAH) and capture master data
             if validated_model.marketing_authorization_holder_raw:
-                org = spor_client.search_organisation(
+                org_api = spor_client.search_organisation(
                     validated_model.marketing_authorization_holder_raw
                 )
-                if org:
-                    validated_model.mah_oms_id = org.org_id
-                    logger.debug(f"Enriched MAH '{org.name}' with OMS ID {org.org_id}")
+                if org_api:
+                    validated_model.mah_oms_id = org_api.org_id
+                    # Map API model to DB model
+                    org_db = Organization(
+                        oms_id=org_api.org_id, organization_name=org_api.name
+                    )
+                    organizations.append(org_db)
+                    logger.debug(f"Enriched MAH '{org_api.name}' with OMS ID {org_api.org_id}")
 
-            # 4. Enrich Substances and create link records
+            # 4. Enrich Substances, create link records, and capture master data
             if validated_model.active_substance_raw:
-                # Split substances on commas, semicolons, or 'and'
-                # This is more robust than a simple comma-split.
                 substance_names = re.split(
                     r"[,;]|\s+and\s+", validated_model.active_substance_raw
                 )
@@ -86,38 +94,35 @@ def transform_and_validate(
                     sub_name = sub_name_raw.strip()
                     if not sub_name:
                         continue
-                    substance = spor_client.search_substance(sub_name)
-                    if substance:
+                    sub_api = spor_client.search_substance(sub_name)
+                    if sub_api:
                         link = EparSubstanceLink(
                             epar_id=validated_model.epar_id,
-                            spor_substance_id=substance.sms_id,
+                            spor_substance_id=sub_api.sms_id,
                         )
                         substance_links.append(link)
-                        logger.debug(f"Enriched substance '{sub_name}' with SMS ID {substance.sms_id}")
+                        # Map API model to DB model
+                        sub_db = Substance(
+                            spor_substance_id=sub_api.sms_id,
+                            substance_name=sub_api.name,
+                        )
+                        substances.append(sub_db)
+                        logger.debug(f"Enriched substance '{sub_api.name}' with SMS ID {sub_api.sms_id}")
 
-
-            yield validated_model, substance_links
+            yield validated_model, substance_links, organizations, substances
             validated_count += 1
 
         except ValidationError as e:
             logger.warning(
-                f"Record {i+1} failed validation and will be quarantined. "
-                f"Record: {raw_record}. Error: {e}"
+                f"Record {i+1} failed validation. Record: {raw_record}. Error: {e}"
             )
             failed_count += 1
-            # In a real system, this failed record would be sent to a
-            # dead-letter queue or error table.
             continue
         except ValueError as e:
-            logger.warning(
-                f"Record {i+1} could not be processed and will be skipped. "
-                f"Record: {raw_record}. Error: {e}"
-            )
+            logger.warning(f"Record {i+1} skipped. Record: {raw_record}. Error: {e}")
             failed_count += 1
             continue
 
-
     logger.info(
-        f"Finished transformation. "
-        f"Successfully processed: {validated_count}. Failed/Skipped: {failed_count}."
+        f"Finished transformation. Processed: {validated_count}. Failed: {failed_count}."
     )
