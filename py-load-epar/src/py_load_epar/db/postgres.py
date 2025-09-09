@@ -121,9 +121,10 @@ class PostgresAdapter(IDatabaseAdapter):
         self,
         load_strategy: str,
         target_table: str,
-        staging_table: str | None = None,
-        pydantic_model: Type[BaseModel] | None = None,
-        primary_key_columns: list[str] | None = None,
+        staging_table: Optional[str] = None,
+        pydantic_model: Optional[Type[BaseModel]] = None,
+        primary_key_columns: Optional[list[str]] = None,
+        soft_delete_settings: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Finalize the load process. For 'DELTA', merges from staging to target.
@@ -150,44 +151,70 @@ class PostgresAdapter(IDatabaseAdapter):
                     if col not in primary_key_columns
                 ]
 
+                merge_sql = f"""
+                INSERT INTO {target_table} ({', '.join(columns)})
+                SELECT {', '.join(columns)} FROM {staging_table}
+                ON CONFLICT ({pk_cols_str}) DO UPDATE SET
+                    {', '.join(update_cols)};
+                """
                 if not update_cols:
                     merge_sql = f"""
                     INSERT INTO {target_table} ({', '.join(columns)})
                     SELECT {', '.join(columns)} FROM {staging_table}
                     ON CONFLICT ({pk_cols_str}) DO NOTHING;
                     """
-                else:
-                    merge_sql = f"""
-                    INSERT INTO {target_table} ({', '.join(columns)})
-                    SELECT {', '.join(columns)} FROM {staging_table}
-                    ON CONFLICT ({pk_cols_str}) DO UPDATE SET
-                        {', '.join(update_cols)};
-                    """
+
                 cursor.execute(merge_sql)
                 logger.info(f"Merged {cursor.rowcount} records into {target_table}.")
 
-                if "is_active" in pydantic_model.model_fields:
-                    logger.info(f"Performing soft-delete on {target_table} for withdrawn records.")
-                    pk_match_clause = " AND ".join(
-                        [f"t.{pk} = s.{pk}" for pk in primary_key_columns]
+                if soft_delete_settings:
+                    self._perform_soft_delete(
+                        cursor,
+                        target_table,
+                        staging_table,
+                        primary_key_columns,
+                        soft_delete_settings,
                     )
-                    soft_delete_sql = f"""
-                        UPDATE {target_table} AS t
-                        SET is_active = FALSE
-                        WHERE
-                            t.is_active = TRUE
-                            AND NOT EXISTS (
-                                SELECT 1 FROM {staging_table} AS s WHERE {pk_match_clause}
-                            );
-                    """
-                    cursor.execute(soft_delete_sql)
-                    logger.info(f"Soft-deleted {cursor.rowcount} records from {target_table}.")
 
                 logger.info(f"Dropping staging table {staging_table}.")
                 cursor.execute(f"DROP TABLE {staging_table};")
 
             logger.info("Committing transaction.")
             self.conn.commit()
+
+    def _perform_soft_delete(
+        self,
+        cursor: Any,
+        target_table: str,
+        staging_table: str,
+        primary_key_columns: list[str],
+        settings: Dict[str, Any],
+    ) -> None:
+        """Helper method to perform a soft-delete operation."""
+        delete_col = settings.get("column")
+        inactive_val = settings.get("inactive_value")
+        active_val = settings.get("active_value")
+
+        if not all([delete_col, inactive_val is not None, active_val is not None]):
+            logger.warning("Soft delete settings are incomplete. Skipping.")
+            return
+
+        logger.info(f"Performing soft-delete on {target_table} for withdrawn records.")
+        pk_match_clause = " AND ".join(
+            [f"t.{pk} = s.{pk}" for pk in primary_key_columns]
+        )
+
+        soft_delete_sql = f"""
+            UPDATE {target_table} AS t
+            SET {delete_col} = %s
+            WHERE
+                {delete_col} = %s
+                AND NOT EXISTS (
+                    SELECT 1 FROM {staging_table} AS s WHERE {pk_match_clause}
+                );
+        """
+        cursor.execute(soft_delete_sql, (inactive_val, active_val))
+        logger.info(f"Soft-deleted {cursor.rowcount} records from {target_table}.")
 
     def rollback(self) -> None:
         """Roll back the transaction in case of failure."""

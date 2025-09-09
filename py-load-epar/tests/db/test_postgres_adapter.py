@@ -183,12 +183,24 @@ def test_delta_load_soft_delete(postgres_adapter: PostgresAdapter):
             last_update_date_source=datetime.date(2023, 1, 3),
         ),
     ]
+    soft_delete_settings = {
+        "column": "is_active",
+        "inactive_value": False,
+        "active_value": True,
+    }
     data_iterator_1 = (
         tuple(record.model_dump(include=columns).values()) for record in initial_data
     )
     staging_1 = postgres_adapter.prepare_load("DELTA", target_table)
     postgres_adapter.bulk_load_batch(data_iterator_1, staging_1, columns)
-    postgres_adapter.finalize("DELTA", target_table, staging_1, model, pk_columns)
+    postgres_adapter.finalize(
+        "DELTA",
+        target_table,
+        staging_1,
+        model,
+        pk_columns,
+        soft_delete_settings=soft_delete_settings,
+    )
 
     # Verify initial state
     with postgres_adapter.conn.cursor() as cursor:
@@ -221,7 +233,14 @@ def test_delta_load_soft_delete(postgres_adapter: PostgresAdapter):
     )
     staging_2 = postgres_adapter.prepare_load("DELTA", target_table)
     postgres_adapter.bulk_load_batch(data_iterator_2, staging_2, columns)
-    postgres_adapter.finalize("DELTA", target_table, staging_2, model, pk_columns)
+    postgres_adapter.finalize(
+        "DELTA",
+        target_table,
+        staging_2,
+        model,
+        pk_columns,
+        soft_delete_settings=soft_delete_settings,
+    )
 
     # Verify final state
     with postgres_adapter.conn.cursor() as cursor:

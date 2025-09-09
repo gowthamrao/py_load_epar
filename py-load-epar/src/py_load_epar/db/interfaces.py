@@ -59,13 +59,13 @@ class IDatabaseAdapter(ABC):
         self,
         load_strategy: str,
         target_table: str,
-        staging_table: str | None = None,
-        pydantic_model: Type["BaseModel"] | None = None,
-        primary_key_columns: list[str] | None = None,
+        staging_table: Optional[str] = None,
+        pydantic_model: Optional[Type["BaseModel"]] = None,
+        primary_key_columns: Optional[list[str]] = None,
+        soft_delete_settings: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Finalize the load process (e.g., merge staging to target, analyze, commit).
-
         Args:
             load_strategy: The loading strategy ('FULL' or 'DELTA').
             target_table: The final target table.
@@ -73,6 +73,9 @@ class IDatabaseAdapter(ABC):
             pydantic_model: The Pydantic model, required for 'DELTA' loads.
             primary_key_columns: A list of primary key columns, required for 'DELTA'
                 loads to build the merge/conflict statement.
+            soft_delete_settings: Optional dictionary with settings for soft
+                deletes. Expected keys: 'column' (e.g., 'is_active'),
+                'inactive_value' (e.g., False), 'active_value' (e.g., True).
         """
         pass
 
