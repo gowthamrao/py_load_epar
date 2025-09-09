@@ -72,10 +72,10 @@ def extract_data(
         if "active_substance" in record:
             record["active_substance_raw"] = record.pop("active_substance")
 
-        # The 'URL' column from the sheet is snake_cased to 'url' by the parser.
+        # The 'URL' column from the sheet is snake_cased to 'u_r_l' by the parser.
         # We map it to the 'source_url' field in our Pydantic model.
-        if "url" in record:
-            record["source_url"] = record.pop("url")
+        if "u_r_l" in record:
+            record["source_url"] = record.pop("u_r_l")
 
         # --- CDC Filter ---
         if high_water_mark and record_date <= high_water_mark.date():

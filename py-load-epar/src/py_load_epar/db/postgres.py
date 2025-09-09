@@ -175,6 +175,25 @@ class PostgresAdapter(IDatabaseAdapter):
                 cursor.execute(merge_sql)
                 logger.info(f"Merged {cursor.rowcount} records into {target_table}.")
 
+                # Step 2: Conditionally soft-delete records if the table supports it
+                if "is_active" in pydantic_model.model_fields:
+                    logger.info(f"Performing soft-delete on {target_table} for withdrawn records.")
+                    pk_match_clause = " AND ".join(
+                        [f"t.{pk} = s.{pk}" for pk in primary_key_columns]
+                    )
+                    soft_delete_sql = f"""
+                        UPDATE {target_table} AS t
+                        SET is_active = FALSE
+                        WHERE
+                            t.is_active = TRUE
+                            AND NOT EXISTS (
+                                SELECT 1 FROM {staging_table} AS s WHERE {pk_match_clause}
+                            );
+                    """
+                    cursor.execute(soft_delete_sql)
+                    logger.info(f"Soft-deleted {cursor.rowcount} records from {target_table}.")
+
+
                 logger.info(f"Dropping staging table {staging_table}.")
                 cursor.execute(f"DROP TABLE {staging_table};")
 

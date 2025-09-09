@@ -136,6 +136,94 @@ def test_delta_load_strategy(postgres_adapter: PostgresAdapter, sample_data):
         assert cursor.fetchone()[0] == "TestMed C New"
 
 
+def test_delta_load_soft_delete(postgres_adapter: PostgresAdapter):
+    """
+    Test that the DELTA load strategy correctly soft-deletes records that
+    are no longer present in the source data.
+    """
+    target_table = "epar_index"
+    pk_columns = ["epar_id"]
+
+    # Initial load of 3 records
+    initial_data = [
+        EparIndex(
+            epar_id="EMA/1",
+            medicine_name="Active Med A",
+            authorization_status="Authorised",
+            last_update_date_source=datetime.date(2023, 1, 1),
+        ),
+        EparIndex(
+            epar_id="EMA/2",
+            medicine_name="Active Med B",
+            authorization_status="Authorised",
+            last_update_date_source=datetime.date(2023, 1, 2),
+        ),
+        EparIndex(
+            epar_id="EMA/3",
+            medicine_name="To be Deactivated",
+            authorization_status="Authorised",
+            last_update_date_source=datetime.date(2023, 1, 3),
+        ),
+    ]
+    staging_1 = postgres_adapter.prepare_load("DELTA", target_table)
+    postgres_adapter.bulk_load_batch(iter(initial_data), staging_1, EparIndex)
+    postgres_adapter.finalize("DELTA", target_table, staging_1, EparIndex, pk_columns)
+
+    # Verify initial state
+    with postgres_adapter.conn.cursor() as cursor:
+        cursor.execute(f"SELECT COUNT(*) FROM {target_table} WHERE is_active = TRUE")
+        assert cursor.fetchone()[0] == 3
+
+    # Delta load where EMA/3 is now missing
+    delta_data = [
+        EparIndex(
+            epar_id="EMA/1",
+            medicine_name="Active Med A",
+            authorization_status="Authorised",
+            last_update_date_source=datetime.date(2023, 1, 1),
+        ),
+        EparIndex(
+            epar_id="EMA/2",
+            medicine_name="Active Med B Updated", # Update this one
+            authorization_status="Authorised",
+            last_update_date_source=datetime.date(2023, 1, 4),
+        ),
+        EparIndex(
+            epar_id="EMA/4", # Add a new one
+            medicine_name="New Med D",
+            authorization_status="Authorised",
+            last_update_date_source=datetime.date(2023, 1, 5),
+        ),
+    ]
+    staging_2 = postgres_adapter.prepare_load("DELTA", target_table)
+    postgres_adapter.bulk_load_batch(iter(delta_data), staging_2, EparIndex)
+    postgres_adapter.finalize("DELTA", target_table, staging_2, EparIndex, pk_columns)
+
+    # Verify final state
+    with postgres_adapter.conn.cursor() as cursor:
+        # Check counts
+        cursor.execute(f"SELECT COUNT(*) FROM {target_table}")
+        assert cursor.fetchone()[0] == 4 # 3 initial + 1 new
+        cursor.execute(f"SELECT COUNT(*) FROM {target_table} WHERE is_active = TRUE")
+        assert cursor.fetchone()[0] == 3 # EMA/1, EMA/2, EMA/4
+
+        # Check soft-deleted record
+        cursor.execute(f"SELECT is_active FROM {target_table} WHERE epar_id = 'EMA/3'")
+        assert cursor.fetchone()[0] is False
+
+        # Check updated record
+        cursor.execute(f"SELECT medicine_name FROM {target_table} WHERE epar_id = 'EMA/2'")
+        assert cursor.fetchone()[0] == "Active Med B Updated"
+
+        # Check untouched record
+        cursor.execute(f"SELECT is_active FROM {target_table} WHERE epar_id = 'EMA/1'")
+        assert cursor.fetchone()[0] is True
+
+        # Check new record
+        cursor.execute(f"SELECT is_active FROM {target_table} WHERE epar_id = 'EMA/4'")
+        assert cursor.fetchone()[0] is True
+
+
 # Define a model where the PK is not the first column
 class NonStandardPkModel(BaseModel):
     some_data: str
