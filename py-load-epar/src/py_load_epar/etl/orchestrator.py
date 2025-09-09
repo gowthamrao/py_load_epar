@@ -17,7 +17,13 @@ from py_load_epar.etl.extract import extract_data
 from py_load_epar.storage.factory import StorageFactory
 from py_load_epar.storage.interfaces import IStorage
 from py_load_epar.etl.transform import transform_and_validate
-from py_load_epar.models import EparDocument, EparIndex, EparSubstanceLink
+from py_load_epar.models import (
+    EparDocument,
+    EparIndex,
+    EparSubstanceLink,
+    Organization,
+    Substance,
+)
 from py_load_epar.spor_api.client import SporApiClient
 
 logger = logging.getLogger(__name__)
@@ -63,6 +69,68 @@ def _process_substance_links(
         primary_key_columns=["epar_id", "spor_substance_id"],
     )
     logger.info(f"Successfully loaded {loaded_count} substance links.")
+    return loaded_count
+
+
+def _process_organizations(
+    adapter: IDatabaseAdapter, organizations: List[Organization]
+) -> int:
+    """Bulk loads organization master data into the database."""
+    if not organizations:
+        return 0
+
+    logger.info(f"Processing {len(organizations)} organization master records.")
+    target_table = "organizations"
+    model = Organization
+    columns = list(model.model_fields.keys())
+    # Dedup
+    unique_organizations = {org.oms_id: org for org in organizations}.values()
+    data_iterator = (
+        tuple(record.model_dump(include=columns).values())
+        for record in unique_organizations
+    )
+
+    staging_table = adapter.prepare_load("DELTA", target_table)
+    loaded_count = adapter.bulk_load_batch(data_iterator, staging_table, columns)
+    adapter.finalize(
+        "DELTA",
+        target_table,
+        staging_table,
+        model,
+        primary_key_columns=["oms_id"],
+    )
+    logger.info(f"Successfully loaded {loaded_count} organization records.")
+    return loaded_count
+
+
+def _process_substances(adapter: IDatabaseAdapter, substances: List[Substance]) -> int:
+    """Bulk loads substance master data into the database."""
+    if not substances:
+        return 0
+
+    logger.info(f"Processing {len(substances)} substance master records.")
+    target_table = "substances"
+    model = Substance
+    columns = list(model.model_fields.keys())
+    # Dedup
+    unique_substances = {
+        sub.spor_substance_id: sub for sub in substances
+    }.values()
+    data_iterator = (
+        tuple(record.model_dump(include=columns).values())
+        for record in unique_substances
+    )
+
+    staging_table = adapter.prepare_load("DELTA", target_table)
+    loaded_count = adapter.bulk_load_batch(data_iterator, staging_table, columns)
+    adapter.finalize(
+        "DELTA",
+        target_table,
+        staging_table,
+        model,
+        primary_key_columns=["spor_substance_id"],
+    )
+    logger.info(f"Successfully loaded {loaded_count} substance records.")
     return loaded_count
 
 
@@ -242,24 +310,47 @@ def run_etl(settings: Settings) -> None:
         # 4. Process data in batches
         total_loaded_count = 0
         new_high_water_mark = high_water_mark
+        all_substance_links: List[EparSubstanceLink] = []
 
         for i, batch in enumerate(batches):
-            epar_records, substance_links = zip(*batch) if batch else ([], [])
-            logger.info(f"Processing batch {i+1} with {len(epar_records)} records.")
-
-            if not epar_records:
+            if not batch:
                 continue
 
-            # Find the latest date in the current batch to update the HWM
+            (
+                epar_records,
+                substance_links,
+                organizations,
+                substances,
+            ) = zip(*batch)
+            logger.info(f"Processing batch {i+1} with {len(epar_records)} records.")
+
+            # Flatten lists from the batch
+            flat_organizations = [org for sublist in organizations for org in sublist]
+            flat_substances = [sub for sublist in substances for sub in sublist]
+            all_substance_links.extend(
+                [link for sublist in substance_links for link in sublist]
+            )
+
+            # --- Load Master Data and Documents ---
+            # This can happen in-flight as these tables don't depend on epar_index.
+            _process_organizations(adapter, flat_organizations)
+            _process_substances(adapter, flat_substances)
+            _process_documents(
+                adapter=adapter, processed_records=list(epar_records), storage=storage
+            )
+
+            # --- Find the latest date in the current batch to update the HWM ---
             for record in epar_records:
                 if new_high_water_mark is None or record.last_update_date_source > (
-                    new_high_water_mark.date()
-                    if isinstance(new_high_water_mark, datetime.datetime)
-                    else new_high_water_mark
+                    (
+                        new_high_water_mark.date()
+                        if isinstance(new_high_water_mark, datetime.datetime)
+                        else new_high_water_mark
+                    )
                 ):
                     new_high_water_mark = record.last_update_date_source
 
-            # Load batch into the main staging table
+            # --- Load batch into the main epar_index staging table ---
             columns = list(target_model.model_fields.keys())
             data_iterator = (
                 tuple(record.model_dump(include=columns).values())
@@ -272,15 +363,6 @@ def run_etl(settings: Settings) -> None:
             )
             total_loaded_count += loaded_count
 
-            # Process ancillary data for the current batch immediately
-            flat_substance_links = [
-                link for sublist in substance_links for link in sublist
-            ]
-            _process_substance_links(adapter, flat_substance_links)
-            _process_documents(
-                adapter=adapter, processed_records=list(epar_records), storage=storage
-            )
-
         # 5. Finalize the main table load
         logger.info("Finalizing load for epar_index table.")
         adapter.finalize(
@@ -290,6 +372,10 @@ def run_etl(settings: Settings) -> None:
             pydantic_model=target_model,
             primary_key_columns=["epar_id"],
         )
+
+        # 6. Load substance links now that epar_index is populated
+        logger.info(f"Processing {len(all_substance_links)} total substance links.")
+        _process_substance_links(adapter, all_substance_links)
 
         # 6. Log pipeline success
         adapter.log_pipeline_success(

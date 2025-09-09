@@ -15,11 +15,15 @@ from py_load_epar.storage.interfaces import IStorage
 @patch("py_load_epar.etl.orchestrator.get_db_adapter")
 @patch("py_load_epar.etl.orchestrator.extract_data")
 @patch("py_load_epar.etl.orchestrator.transform_and_validate")
+@patch("py_load_epar.etl.orchestrator._process_organizations")
+@patch("py_load_epar.etl.orchestrator._process_substances")
 @patch("py_load_epar.etl.orchestrator._process_substance_links")
 @patch("py_load_epar.etl.orchestrator._process_documents")
 def test_run_etl_successful_flow(
     mock_process_docs,
     mock_process_links,
+    mock_process_substances,
+    mock_process_orgs,
     mock_transform,
     mock_extract,
     mock_get_adapter,
@@ -32,6 +36,7 @@ def test_run_etl_successful_flow(
     """
     # Arrange
     settings = Settings()
+    settings.etl.batch_size = 1 # Process one record at a time
     mock_adapter = MagicMock()
     mock_adapter.get_latest_high_water_mark.return_value = None
     mock_get_adapter.return_value = mock_adapter
@@ -42,16 +47,20 @@ def test_run_etl_successful_flow(
     mock_storage_instance = MagicMock(spec=IStorage)
     mock_storage_factory.return_value.get_storage.return_value = mock_storage_instance
 
-    mock_raw_records_iterator = iter([{"id": 1}])
+    mock_raw_records_iterator = iter([{"id": 1}, {"id": 2}])
     mock_extract.return_value = mock_raw_records_iterator
 
     record1 = MagicMock(spec=EparIndex)
     record1.last_update_date_source = datetime.date(2024, 1, 1)
     record2 = MagicMock(spec=EparIndex)
     record2.last_update_date_source = datetime.date(2024, 1, 2)
-    epar_records = [record1, record2]
     substance_links = [MagicMock(spec=EparSubstanceLink)]
-    mock_transform.return_value = iter([(epar_records[0], substance_links), (epar_records[1], [])])
+
+    # Mock transform to return the new 4-tuple format
+    mock_transform.return_value = iter([
+        (record1, substance_links, ["org1"], ["sub1"]),
+        (record2, [], [], []),
+    ])
     mock_adapter.log_pipeline_start.return_value = 123
 
     # Act
@@ -66,12 +75,13 @@ def test_run_etl_successful_flow(
     mock_transform.assert_called_once_with(
         mock_raw_records_iterator, mock_spor_client_instance, 123
     )
+    # Check that all processing functions were called with the correct data
+    assert mock_process_orgs.call_count == 2
+    mock_process_orgs.assert_any_call(mock_adapter, ["org1"])
+    assert mock_process_substances.call_count == 2
+    mock_process_substances.assert_any_call(mock_adapter, ["sub1"])
     mock_process_links.assert_called_once_with(mock_adapter, substance_links)
-    mock_process_docs.assert_called_once_with(
-        adapter=mock_adapter,
-        processed_records=list(epar_records),
-        storage=mock_storage_instance,
-    )
+    assert mock_process_docs.call_count == 2
     mock_adapter.close.assert_called_once()
 
 
