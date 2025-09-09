@@ -20,13 +20,10 @@ class LocalStorage(IStorage):
         """Ensures the base storage directory exists."""
         try:
             self.base_path.mkdir(parents=True, exist_ok=True)
-            logger.info(
-                f"Ensured local storage directory exists at: {self.base_path}"
-            )
+            logger.info(f"Ensured local storage directory exists at: {self.base_path}")
         except OSError as e:
             logger.error(
-                f"Failed to create local storage directory at "
-                f"{self.base_path}: {e}"
+                f"Failed to create local storage directory at " f"{self.base_path}: {e}"
             )
             raise
 
@@ -49,8 +46,7 @@ class LocalStorage(IStorage):
             destination_path.parent.mkdir(parents=True, exist_ok=True)
         except OSError as e:
             logger.error(
-                f"Failed to create parent directory for "
-                f"{destination_path}: {e}"
+                f"Failed to create parent directory for " f"{destination_path}: {e}"
             )
             raise
 

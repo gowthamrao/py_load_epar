@@ -1,5 +1,5 @@
 [project]
-name = "py-load-epar"
+name = "py_load_epar"
 version = "0.1.0"
 description = "A package to load EPAR data from the European Medicines Agency (EMA)."
 authors = [
@@ -15,6 +15,12 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
 ]
+keywords = ["ema", "epar", "pharmacovigilance", "ohdsi"]
+
+[project.urls]
+"Homepage" = "https://github.com/gowthamrao/py_load_epar"
+"Source" = "https://github.com/gowthamrao/py_load_epar"
+"Tracker" = "https://github.com/gowthamrao/py_load_epar/issues"
 
 [tool.poetry]
 packages = [{include = "py_load_epar", from = "src"}]

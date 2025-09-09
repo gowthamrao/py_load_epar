@@ -354,6 +354,7 @@ class StreamingIteratorIO(io.IOBase):
     streaming of data from a Python iterator to the database without
     buffering the entire dataset in memory.
     """
+
     def __init__(self, iterator: Iterator[bytes]):
         self._iterator = iterator
         self._buffer = b""
