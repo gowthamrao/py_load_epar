@@ -41,11 +41,16 @@ def test_connection(postgres_adapter: PostgresAdapter):
 def test_full_load_strategy(postgres_adapter: PostgresAdapter, sample_data):
     """Test the FULL load strategy, which should truncate and reload."""
     target_table = "epar_index"
+    model = EparIndex
+    columns = list(model.model_fields.keys())
 
     # First load
+    data_iterator_1 = (
+        tuple(record.model_dump(include=columns).values()) for record in sample_data
+    )
     staging_table = postgres_adapter.prepare_load("FULL", target_table)
     assert staging_table == target_table
-    postgres_adapter.bulk_load_batch(iter(sample_data), staging_table, EparIndex)
+    postgres_adapter.bulk_load_batch(data_iterator_1, staging_table, columns)
     postgres_adapter.finalize("FULL", target_table)
 
     with postgres_adapter.conn.cursor() as cursor:
@@ -61,8 +66,11 @@ def test_full_load_strategy(postgres_adapter: PostgresAdapter, sample_data):
             last_update_date_source=datetime.date(2023, 2, 1),
         )
     ]
+    data_iterator_2 = (
+        tuple(record.model_dump(include=columns).values()) for record in new_data
+    )
     postgres_adapter.prepare_load("FULL", target_table)
-    postgres_adapter.bulk_load_batch(iter(new_data), target_table, EparIndex)
+    postgres_adapter.bulk_load_batch(data_iterator_2, target_table, columns)
     postgres_adapter.finalize("FULL", target_table)
 
     with postgres_adapter.conn.cursor() as cursor:
@@ -82,15 +90,20 @@ def test_delta_load_strategy(postgres_adapter: PostgresAdapter, sample_data):
     records.
     """
     target_table = "epar_index"
+    model = EparIndex
+    columns = list(model.model_fields.keys())
 
     # Initial load
+    data_iterator_1 = (
+        tuple(record.model_dump(include=columns).values()) for record in sample_data
+    )
     staging_table_1 = postgres_adapter.prepare_load("DELTA", target_table)
-    postgres_adapter.bulk_load_batch(iter(sample_data), staging_table_1, EparIndex)
+    postgres_adapter.bulk_load_batch(data_iterator_1, staging_table_1, columns)
     postgres_adapter.finalize(
         "DELTA",
         target_table,
         staging_table_1,
-        EparIndex,
+        model,
         primary_key_columns=["epar_id"],
     )
 
@@ -113,13 +126,16 @@ def test_delta_load_strategy(postgres_adapter: PostgresAdapter, sample_data):
             last_update_date_source=datetime.date(2023, 2, 1),
         ),  # Insert
     ]
+    data_iterator_2 = (
+        tuple(record.model_dump(include=columns).values()) for record in delta_data
+    )
     staging_table_2 = postgres_adapter.prepare_load("DELTA", target_table)
-    postgres_adapter.bulk_load_batch(iter(delta_data), staging_table_2, EparIndex)
+    postgres_adapter.bulk_load_batch(data_iterator_2, staging_table_2, columns)
     postgres_adapter.finalize(
         "DELTA",
         target_table,
         staging_table_2,
-        EparIndex,
+        model,
         primary_key_columns=["epar_id"],
     )
 
@@ -142,6 +158,8 @@ def test_delta_load_soft_delete(postgres_adapter: PostgresAdapter):
     are no longer present in the source data.
     """
     target_table = "epar_index"
+    model = EparIndex
+    columns = list(model.model_fields.keys())
     pk_columns = ["epar_id"]
 
     # Initial load of 3 records
@@ -165,9 +183,12 @@ def test_delta_load_soft_delete(postgres_adapter: PostgresAdapter):
             last_update_date_source=datetime.date(2023, 1, 3),
         ),
     ]
+    data_iterator_1 = (
+        tuple(record.model_dump(include=columns).values()) for record in initial_data
+    )
     staging_1 = postgres_adapter.prepare_load("DELTA", target_table)
-    postgres_adapter.bulk_load_batch(iter(initial_data), staging_1, EparIndex)
-    postgres_adapter.finalize("DELTA", target_table, staging_1, EparIndex, pk_columns)
+    postgres_adapter.bulk_load_batch(data_iterator_1, staging_1, columns)
+    postgres_adapter.finalize("DELTA", target_table, staging_1, model, pk_columns)
 
     # Verify initial state
     with postgres_adapter.conn.cursor() as cursor:
@@ -195,9 +216,12 @@ def test_delta_load_soft_delete(postgres_adapter: PostgresAdapter):
             last_update_date_source=datetime.date(2023, 1, 5),
         ),
     ]
+    data_iterator_2 = (
+        tuple(record.model_dump(include=columns).values()) for record in delta_data
+    )
     staging_2 = postgres_adapter.prepare_load("DELTA", target_table)
-    postgres_adapter.bulk_load_batch(iter(delta_data), staging_2, EparIndex)
-    postgres_adapter.finalize("DELTA", target_table, staging_2, EparIndex, pk_columns)
+    postgres_adapter.bulk_load_batch(data_iterator_2, staging_2, columns)
+    postgres_adapter.finalize("DELTA", target_table, staging_2, model, pk_columns)
 
     # Verify final state
     with postgres_adapter.conn.cursor() as cursor:
@@ -257,10 +281,15 @@ def test_delta_load_with_non_standard_pk(postgres_adapter: PostgresAdapter):
         NonStandardPkModel(some_data="A", item_id="pk1", more_data=100),
         NonStandardPkModel(some_data="B", item_id="pk2", more_data=200),
     ]
+    model = NonStandardPkModel
+    columns = list(model.model_fields.keys())
+    data_iterator_1 = (
+        tuple(record.model_dump(include=columns).values()) for record in initial_data
+    )
     staging_1 = postgres_adapter.prepare_load("DELTA", target_table)
-    postgres_adapter.bulk_load_batch(iter(initial_data), staging_1, NonStandardPkModel)
+    postgres_adapter.bulk_load_batch(data_iterator_1, staging_1, columns)
     postgres_adapter.finalize(
-        "DELTA", target_table, staging_1, NonStandardPkModel, pk_columns
+        "DELTA", target_table, staging_1, model, pk_columns
     )
 
     # Delta load with an update and an insert
@@ -268,10 +297,13 @@ def test_delta_load_with_non_standard_pk(postgres_adapter: PostgresAdapter):
         NonStandardPkModel(some_data="B_updated", item_id="pk2", more_data=250),
         NonStandardPkModel(some_data="C", item_id="pk3", more_data=300),
     ]
+    data_iterator_2 = (
+        tuple(record.model_dump(include=columns).values()) for record in delta_data
+    )
     staging_2 = postgres_adapter.prepare_load("DELTA", target_table)
-    postgres_adapter.bulk_load_batch(iter(delta_data), staging_2, NonStandardPkModel)
+    postgres_adapter.bulk_load_batch(data_iterator_2, staging_2, columns)
     postgres_adapter.finalize(
-        "DELTA", target_table, staging_2, NonStandardPkModel, pk_columns
+        "DELTA", target_table, staging_2, model, pk_columns
     )
 
     # Assertions
@@ -289,9 +321,14 @@ def test_delta_load_with_non_standard_pk(postgres_adapter: PostgresAdapter):
 def test_rollback_on_failure(postgres_adapter: PostgresAdapter, sample_data):
     """Test that the transaction is rolled back if finalize is not called."""
     target_table = "epar_index"
+    model = EparIndex
+    columns = list(model.model_fields.keys())
+    data_iterator = (
+        tuple(record.model_dump(include=columns).values()) for record in sample_data
+    )
 
     staging_table = postgres_adapter.prepare_load("FULL", target_table)
-    postgres_adapter.bulk_load_batch(iter(sample_data), staging_table, EparIndex)
+    postgres_adapter.bulk_load_batch(data_iterator, staging_table, columns)
 
     # Instead of finalizing, we roll back
     postgres_adapter.rollback()

@@ -37,17 +37,17 @@ class IDatabaseAdapter(ABC):
     @abstractmethod
     def bulk_load_batch(
         self,
-        data_iterator: Iterator["BaseModel"],
+        data_iterator: Iterator[tuple],
         target_table: str,
-        pydantic_model: Type["BaseModel"],
+        columns: list[str],
     ) -> int:
         """
         Execute the native bulk load operation for a batch of data.
 
         Args:
-            data_iterator: An iterator yielding Pydantic model instances to load.
+            data_iterator: An iterator yielding tuples of data to load.
             target_table: The table to load the data into (e.g., a staging table).
-            pydantic_model: The Pydantic model class corresponding to the data.
+            columns: A list of column names in the order they appear in the tuples.
 
         Returns:
             The number of rows loaded in the batch.

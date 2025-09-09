@@ -33,7 +33,6 @@ class PostgresAdapter(IDatabaseAdapter):
         if connection_params:
             conn_details.update(connection_params)
 
-        # The 'type' key is not a valid psycopg2 parameter
         conn_details.pop("type", None)
 
         try:
@@ -44,7 +43,7 @@ class PostgresAdapter(IDatabaseAdapter):
                 )
             )
             self.conn = psycopg2.connect(**conn_details)
-            self.conn.autocommit = False  # Ensure transactions are managed manually
+            self.conn.autocommit = False
         except psycopg2.OperationalError as e:
             logger.error(f"Failed to connect to PostgreSQL: {e}")
             raise
@@ -64,7 +63,6 @@ class PostgresAdapter(IDatabaseAdapter):
                     f"TRUNCATE TABLE {target_table} RESTART IDENTITY CASCADE;"
                 )
                 return target_table
-
             elif load_strategy.upper() == "DELTA":
                 staging_table = f"staging_{target_table}"
                 logger.info(
@@ -79,33 +77,28 @@ class PostgresAdapter(IDatabaseAdapter):
                     )
                 )
                 return staging_table
-
             else:
                 raise ValueError(f"Unknown load strategy: {load_strategy}")
 
     def bulk_load_batch(
         self,
-        data_iterator: Iterator[BaseModel],
+        data_iterator: Iterator[tuple],
         target_table: str,
-        pydantic_model: Type[BaseModel],
+        columns: list[str],
     ) -> int:
         """
         Execute the native bulk load operation for a batch of data using
-        COPY FROM STDIN.
+        COPY FROM STDIN in a streaming fashion.
         """
         if not self.conn:
             raise ConnectionError("Database connection is not established.")
 
-        string_buffer = io.StringIO()
-        count = 0
-        columns = list(pydantic_model.model_fields.keys())
-
-        for record in data_iterator:
-            row_values = [self._format_value(getattr(record, col)) for col in columns]
-            string_buffer.write("\t".join(row_values) + "\n")
-            count += 1
-
-        string_buffer.seek(0)
+        streaming_iterator = StreamingIteratorIO(
+            iterator=(
+                ("\t".join(map(self._format_value, row)) + "\n").encode("utf-8")
+                for row in data_iterator
+            )
+        )
 
         with self.conn.cursor() as cursor:
             try:
@@ -113,12 +106,12 @@ class PostgresAdapter(IDatabaseAdapter):
                     f"COPY {target_table} ({','.join(columns)}) FROM STDIN "
                     "WITH (FORMAT text, NULL '\\N')"
                 )
-                cursor.copy_expert(copy_sql, string_buffer)
+                cursor.copy_expert(copy_sql, streaming_iterator)
                 logger.info(
                     f"Successfully loaded {cursor.rowcount} records into "
                     f"{target_table}."
                 )
-                return int(cursor.rowcount)
+                return cursor.rowcount if cursor.rowcount != -1 else 0
             except psycopg2.Error as e:
                 logger.error(f"Bulk load failed: {e}")
                 self.rollback()
@@ -158,8 +151,6 @@ class PostgresAdapter(IDatabaseAdapter):
                 ]
 
                 if not update_cols:
-                    # If all columns are part of the PK, there's nothing to update.
-                    # We just want to insert the new records.
                     merge_sql = f"""
                     INSERT INTO {target_table} ({', '.join(columns)})
                     SELECT {', '.join(columns)} FROM {staging_table}
@@ -175,7 +166,6 @@ class PostgresAdapter(IDatabaseAdapter):
                 cursor.execute(merge_sql)
                 logger.info(f"Merged {cursor.rowcount} records into {target_table}.")
 
-                # Step 2: Conditionally soft-delete records if the table supports it
                 if "is_active" in pydantic_model.model_fields:
                     logger.info(f"Performing soft-delete on {target_table} for withdrawn records.")
                     pk_match_clause = " AND ".join(
@@ -192,7 +182,6 @@ class PostgresAdapter(IDatabaseAdapter):
                     """
                     cursor.execute(soft_delete_sql)
                     logger.info(f"Soft-deleted {cursor.rowcount} records from {target_table}.")
-
 
                 logger.info(f"Dropping staging table {staging_table}.")
                 cursor.execute(f"DROP TABLE {staging_table};")
@@ -217,7 +206,6 @@ class PostgresAdapter(IDatabaseAdapter):
         if value is None:
             return "\\N"
         value_str = str(value)
-        # Escape characters that have special meaning in text format
         return (
             value_str.replace("\\", "\\\\")
             .replace("\n", "\\n")
@@ -329,3 +317,36 @@ class PostgresAdapter(IDatabaseAdapter):
             )
             self.conn.commit()
             logger.error(f"Successfully logged failure for execution_id {execution_id}.")
+
+
+class StreamingIteratorIO(io.IOBase):
+    """
+    A file-like object that wraps an iterator of bytes.
+    `psycopg2.copy_expert` can read from this object, allowing for true
+    streaming of data from a Python iterator to the database without
+    buffering the entire dataset in memory.
+    """
+    def __init__(self, iterator: Iterator[bytes]):
+        self._iterator = iterator
+        self._buffer = b""
+
+    def readable(self) -> bool:
+        return True
+
+    def read(self, size: int = -1) -> bytes:
+        """Read bytes from the iterator."""
+        if size == -1:
+            self._buffer += b"".join(self._iterator)
+            data = self._buffer
+            self._buffer = b""
+            return data
+
+        while len(self._buffer) < size:
+            try:
+                self._buffer += next(self._iterator)
+            except StopIteration:
+                break
+
+        data = self._buffer[:size]
+        self._buffer = self._buffer[size:]
+        return data
