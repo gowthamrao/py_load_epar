@@ -2,7 +2,7 @@ import datetime
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class PipelineExecution(BaseModel):
@@ -24,7 +24,9 @@ class Organization(BaseModel):
     oms_id: str
     organization_name: str
     country_code: Optional[str] = None
-    last_updated: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
+    last_updated: datetime.datetime = Field(
+        default_factory=lambda: datetime.datetime.now(datetime.timezone.utc)
+    )
 
 
 class Substance(BaseModel):
@@ -32,7 +34,9 @@ class Substance(BaseModel):
 
     spor_substance_id: str
     substance_name: str
-    last_updated: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
+    last_updated: datetime.datetime = Field(
+        default_factory=lambda: datetime.datetime.now(datetime.timezone.utc)
+    )
 
 
 class EparIndex(BaseModel):
@@ -61,12 +65,11 @@ class EparIndex(BaseModel):
     is_active: bool = True
     source_url: Optional[str] = None
     etl_load_timestamp: datetime.datetime = Field(
-        default_factory=datetime.datetime.utcnow
+        default_factory=lambda: datetime.datetime.now(datetime.timezone.utc)
     )
     etl_execution_id: Optional[int] = None
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class EparSubstanceLink(BaseModel):
