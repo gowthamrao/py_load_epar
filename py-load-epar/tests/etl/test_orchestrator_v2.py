@@ -82,15 +82,23 @@ def test_process_documents_parses_html_and_downloads(mocker):
 
     # 5. Assert that the bulk load was called with the correct data
     mock_adapter.bulk_load_batch.assert_called_once()
-    call_args, _ = mock_adapter.bulk_load_batch.call_args
+    call_args, call_kwargs = mock_adapter.bulk_load_batch.call_args
+
+    # Check the iterator and the columns passed
     loaded_data_iterator = call_args[0]
+    columns = call_args[2]
     loaded_data = list(loaded_data_iterator)
     assert len(loaded_data) == 1
 
-    loaded_doc = loaded_data[0]
-    assert isinstance(loaded_doc, EparDocument)
-    assert loaded_doc.epar_id == "test_epar_001"
-    assert loaded_doc.source_url == pdf_full_url
-    assert loaded_doc.storage_location == fake_storage_uri
-    assert loaded_doc.file_hash == fake_hash
-    assert "public assessment report" in loaded_doc.document_type
+    # The data is now a tuple, not a pydantic model instance
+    loaded_doc_tuple = loaded_data[0]
+    assert isinstance(loaded_doc_tuple, tuple)
+
+    # Create a dict from the tuple and columns to easily check values
+    doc_dict = dict(zip(columns, loaded_doc_tuple))
+
+    assert doc_dict["epar_id"] == "test_epar_001"
+    assert doc_dict["source_url"] == pdf_full_url
+    assert doc_dict["storage_location"] == fake_storage_uri
+    assert doc_dict["file_hash"] == fake_hash
+    assert "public assessment report" in doc_dict["document_type"]

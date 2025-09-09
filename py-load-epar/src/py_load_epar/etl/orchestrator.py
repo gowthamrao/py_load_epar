@@ -46,17 +46,20 @@ def _process_substance_links(
 
     logger.info(f"Processing {len(substance_links)} substance link records.")
     target_table = "epar_substance_link"
+    model = EparSubstanceLink
+    columns = list(model.model_fields.keys())
+    data_iterator = (
+        tuple(record.model_dump(include=columns).values()) for record in substance_links
+    )
 
     # Use DELTA strategy to avoid inserting duplicate links on reruns
     staging_table = adapter.prepare_load("DELTA", target_table)
-    loaded_count = adapter.bulk_load_batch(
-        iter(substance_links), staging_table, EparSubstanceLink
-    )
+    loaded_count = adapter.bulk_load_batch(data_iterator, staging_table, columns)
     adapter.finalize(
         "DELTA",
         target_table,
         staging_table,
-        EparSubstanceLink,
+        model,
         primary_key_columns=["epar_id", "spor_substance_id"],
     )
     logger.info(f"Successfully loaded {loaded_count} substance links.")
@@ -178,15 +181,20 @@ def _process_documents(
     # Load the document metadata into the database
     # Use DELTA strategy to handle potential re-downloads gracefully.
     target_table = "epar_documents"
-    staging_table = adapter.prepare_load("DELTA", target_table)
-    loaded_count = adapter.bulk_load_batch(
-        iter(document_records), staging_table, EparDocument
+    model = EparDocument
+    columns = list(model.model_fields.keys())
+    data_iterator = (
+        tuple(record.model_dump(include=columns).values())
+        for record in document_records
     )
+
+    staging_table = adapter.prepare_load("DELTA", target_table)
+    loaded_count = adapter.bulk_load_batch(data_iterator, staging_table, columns)
     adapter.finalize(
         "DELTA",
         target_table,
         staging_table,
-        EparDocument,
+        model,
         primary_key_columns=["document_id"],
     )
 
@@ -252,10 +260,15 @@ def run_etl(settings: Settings) -> None:
                     new_high_water_mark = record.last_update_date_source
 
             # Load batch into the main staging table
+            columns = list(target_model.model_fields.keys())
+            data_iterator = (
+                tuple(record.model_dump(include=columns).values())
+                for record in epar_records
+            )
             loaded_count = adapter.bulk_load_batch(
-                data_iterator=iter(epar_records),
+                data_iterator=data_iterator,
                 target_table=main_staging_table,
-                pydantic_model=target_model,
+                columns=columns,
             )
             total_loaded_count += loaded_count
 
