@@ -311,6 +311,7 @@ def run_etl(settings: Settings) -> None:
         total_loaded_count = 0
         new_high_water_mark = high_water_mark
         all_substance_links: List[EparSubstanceLink] = []
+        all_epar_records: List[EparIndex] = []
 
         for i, batch in enumerate(batches):
             if not batch:
@@ -324,6 +325,9 @@ def run_etl(settings: Settings) -> None:
             ) = zip(*batch)
             logger.info(f"Processing batch {i+1} with {len(epar_records)} records.")
 
+            # Collect all records for later document processing
+            all_epar_records.extend(epar_records)
+
             # Flatten lists from the batch
             flat_organizations = [org for sublist in organizations for org in sublist]
             flat_substances = [sub for sublist in substances for sub in sublist]
@@ -331,13 +335,10 @@ def run_etl(settings: Settings) -> None:
                 [link for sublist in substance_links for link in sublist]
             )
 
-            # --- Load Master Data and Documents ---
-            # This can happen in-flight as these tables don't depend on epar_index.
+            # --- Load Master Data ---
+            # These can be loaded in-flight as they do not depend on other tables.
             _process_organizations(adapter, flat_organizations)
             _process_substances(adapter, flat_substances)
-            _process_documents(
-                adapter=adapter, processed_records=list(epar_records), storage=storage
-            )
 
             # --- Find the latest date in the current batch to update the HWM ---
             for record in epar_records:
@@ -373,11 +374,17 @@ def run_etl(settings: Settings) -> None:
             primary_key_columns=["epar_id"],
         )
 
-        # 6. Load substance links now that epar_index is populated
+        # 6. Process documents now that epar_index is populated
+        logger.info(f"Processing documents for {len(all_epar_records)} total EPAR records.")
+        _process_documents(
+            adapter=adapter, processed_records=all_epar_records, storage=storage
+        )
+
+        # 7. Load substance links now that epar_index is populated
         logger.info(f"Processing {len(all_substance_links)} total substance links.")
         _process_substance_links(adapter, all_substance_links)
 
-        # 6. Log pipeline success
+        # 8. Log pipeline success
         adapter.log_pipeline_success(
             execution_id=execution_id,
             records_processed=total_loaded_count,
