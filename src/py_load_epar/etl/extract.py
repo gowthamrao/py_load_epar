@@ -1,73 +1,88 @@
 import datetime
 import logging
-from typing import Iterator, Dict, Any
+from typing import Any, Dict, Iterator
 
 from py_load_epar.config import Settings
-from py_load_epar.etl.downloader import download_file, parse_excel_data
+from py_load_epar.etl.downloader import download_file_to_memory
+from py_load_epar.etl.parser import parse_ema_excel_file
 
 logger = logging.getLogger(__name__)
 
-# The date format used in the EMA Excel file
-EMA_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
-# The name of the column in the Excel file that we use for CDC
-CDC_COLUMN_NAME = "Last update date"
 
-
-def extract_data(settings: Settings, high_water_mark: datetime.date | None = None) -> Iterator[Dict[str, Any]]:
+def extract_data(  # noqa: C901
+    settings: Settings, high_water_mark: datetime.datetime | None = None
+) -> Iterator[Dict[str, Any]]:
     """
-    Extracts EPAR data from the source by downloading and parsing the EMA file.
+    Orchestrates the extraction of EPAR data from the source file.
 
-    It orchestrates the download and parsing, then applies Change Data Capture (CDC)
-    logic to filter for new or updated records based on the high_water_mark.
+    1. Downloads the main EMA data file into memory.
+    2. Parses the in-memory Excel file into a stream of dictionaries.
+    3. Remaps and cleans raw dictionary keys to match Pydantic model fields.
+    4. Filters records based on the high_water_mark for Change Data Capture (CDC).
 
     Args:
-        settings: The application settings, containing the URL for the file.
-        high_water_mark: The last update date from the previous successful run.
+        settings: The application settings, containing the URL for the data file.
+        high_water_mark: The timestamp of the last successful run. Only records
+                         newer than this will be processed.
 
     Yields:
-        A dictionary representing a single raw EPAR record that is new or updated.
+        An iterator of dictionaries, where each dictionary represents a single
+        new or updated record, cleaned and ready for Pydantic validation.
     """
     logger.info("Starting data extraction process.")
+    if high_water_mark:
+        logger.info(f"Using high water mark for CDC: {high_water_mark.isoformat()}")
 
-    # 1. Download the file
-    file_url = settings.api.ema_file_url
-    file_content = download_file(file_url)
+    # 1. Download the file into an in-memory stream
+    excel_file_stream = download_file_to_memory(url=settings.etl.epar_data_url)
 
-    # 2. Parse the Excel data
-    raw_records = parse_excel_data(file_content)
+    # 2. Parse the stream directly
+    raw_records_iterator = parse_ema_excel_file(excel_file_stream)
 
-    # 3. Apply CDC logic
-    logger.info(f"Applying CDC filter with high_water_mark: {high_water_mark}")
-    extracted_count = 0
-    for record in raw_records:
-        # The date in the Excel file can be a datetime object or a string
-        last_update_val = record.get(CDC_COLUMN_NAME)
-
-        if not last_update_val:
-            logger.warning(f"Record missing CDC column '{CDC_COLUMN_NAME}'. Skipping. Record: {record.get('Medicine name')}")
+    processed_count = 0
+    for record in raw_records_iterator:
+        # --- Field renaming and type conversion ---
+        update_date_val = record.get("revision_date")
+        if not update_date_val:
             continue
 
-        try:
-            # Handle both datetime objects and string representations
-            if isinstance(last_update_val, datetime.datetime):
-                record_date = last_update_val.date()
-            else:
-                # Assuming the string is in a consistent format.
-                # The .date() call extracts just the date part.
-                record_date = datetime.datetime.strptime(str(last_update_val), EMA_DATE_FORMAT).date()
-        except (ValueError, TypeError) as e:
-            logger.error(
-                f"Could not parse date '{last_update_val}' for record. Skipping. "
-                f"Record: {record.get('Medicine name')}. Error: {e}"
+        if isinstance(update_date_val, datetime.datetime):
+            record_date = update_date_val.date()
+        elif isinstance(update_date_val, datetime.date):
+            record_date = update_date_val
+        else:
+            try:
+                record_date = datetime.datetime.fromisoformat(
+                    str(update_date_val)
+                ).date()
+            except (ValueError, TypeError):
+                logger.warning(
+                    f"Could not parse date '{update_date_val}' for record. Skipping."
+                )
+                continue
+
+        # The Pydantic model expects 'last_update_date_source'
+        record["last_update_date_source"] = record_date
+
+        # Rename keys from parser output to match Pydantic model fields
+        if "marketing_authorisation_holder_company_name" in record:
+            record["marketing_authorization_holder_raw"] = record.pop(
+                "marketing_authorisation_holder_company_name"
             )
+        if "active_substance" in record:
+            record["active_substance_raw"] = record.pop("active_substance")
+
+        # The 'URL' column from the sheet is snake_cased to 'u_r_l' by the parser.
+        # We map it to the 'source_url' field in our Pydantic model.
+        if "u_r_l" in record:
+            record["source_url"] = record.pop("u_r_l")
+
+        # --- CDC Filter ---
+        if high_water_mark and record_date <= high_water_mark.date():
             continue
 
-        # The actual CDC filter
-        if high_water_mark is None or record_date > high_water_mark:
-            logger.debug(f"Extracting record updated on {record_date}: {record.get('Medicine name')}")
-            # Add the parsed date to the record for downstream use
-            record['last_update_date_source'] = record_date
-            yield record
-            extracted_count += 1
-
-    logger.info(f"Finished data extraction. Extracted {extracted_count} new/updated records.")
+        yield record
+        processed_count += 1
+    logger.info(
+        f"Finished data extraction. Yielded {processed_count} new/updated records."
+    )

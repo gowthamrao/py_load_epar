@@ -20,7 +20,10 @@ class S3Storage(IStorage):
 
         self.bucket_name = bucket_name
         self.s3_client = boto3.client("s3", region_name=region_name)
-        logger.info(f"Initialized S3Storage for bucket '{self.bucket_name}' in region '{region_name or 'default'}'.")
+        logger.info(
+            f"Initialized S3Storage for bucket '{self.bucket_name}' in region "
+            f"'{region_name or 'default'}'."
+        )
 
     def save(self, data_stream: IO[bytes], object_name: str) -> str:
         """

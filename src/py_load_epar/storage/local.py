@@ -1,5 +1,4 @@
 import logging
-import os
 from pathlib import Path
 from typing import IO
 
@@ -21,9 +20,14 @@ class LocalStorage(IStorage):
         """Ensures the base storage directory exists."""
         try:
             self.base_path.mkdir(parents=True, exist_ok=True)
-            logger.info(f"Ensured local storage directory exists at: {self.base_path}")
+            logger.info(
+                f"Ensured local storage directory exists at: {self.base_path}"
+            )
         except OSError as e:
-            logger.error(f"Failed to create local storage directory at {self.base_path}: {e}")
+            logger.error(
+                f"Failed to create local storage directory at "
+                f"{self.base_path}: {e}"
+            )
             raise
 
     def save(self, data_stream: IO[bytes], object_name: str) -> str:
@@ -44,7 +48,10 @@ class LocalStorage(IStorage):
         try:
             destination_path.parent.mkdir(parents=True, exist_ok=True)
         except OSError as e:
-            logger.error(f"Failed to create parent directory for {destination_path}: {e}")
+            logger.error(
+                f"Failed to create parent directory for "
+                f"{destination_path}: {e}"
+            )
             raise
 
         try:

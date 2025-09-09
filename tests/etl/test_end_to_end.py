@@ -1,10 +1,10 @@
-import datetime
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
-from py_load_epar.config import DatabaseSettings, Settings
+
+from py_load_epar.config import Settings
 from py_load_epar.db.postgres import PostgresAdapter
 from py_load_epar.etl.orchestrator import run_etl
 from py_load_epar.spor_api.models import SporOmsOrganisation, SporSmsSubstance

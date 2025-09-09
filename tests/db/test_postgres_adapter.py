@@ -1,10 +1,10 @@
 import datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from pydantic import BaseModel
 
-from py_load_epar.config import DatabaseSettings, Settings
+from py_load_epar.config import Settings
 from py_load_epar.db.postgres import PostgresAdapter
 from py_load_epar.etl.orchestrator import run_etl
 from py_load_epar.models import EparIndex

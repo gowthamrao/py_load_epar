@@ -1,12 +1,8 @@
 import datetime
-import uuid
-from pathlib import Path
-from unittest.mock import MagicMock, call
-
-import requests
+from unittest.mock import MagicMock
 
 from py_load_epar.etl.orchestrator import _process_documents
-from py_load_epar.models import EparDocument, EparIndex
+from py_load_epar.models import EparIndex
 from py_load_epar.storage.interfaces import IStorage
 
 

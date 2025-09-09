@@ -1,5 +1,5 @@
-from abc import ABC, abstractmethod
 import datetime
+from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Dict, Iterator, Optional, Type
 
 if TYPE_CHECKING:
@@ -98,7 +98,9 @@ class IDatabaseAdapter(ABC):
         pass
 
     @abstractmethod
-    def log_pipeline_start(self, load_strategy: str, source_file_version: Optional[str] = None) -> int:
+    def log_pipeline_start(
+        self, load_strategy: str, source_file_version: Optional[str] = None
+    ) -> int:
         """
         Logs the start of a new pipeline execution and returns the execution ID.
         """

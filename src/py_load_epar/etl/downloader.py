@@ -1,12 +1,17 @@
+import hashlib
 import io
 import logging
-from typing import Any, Dict, Iterator
+from typing import IO, Tuple
 
-import openpyxl
 import requests
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from py_load_epar.storage.interfaces import IStorage
+
 logger = logging.getLogger(__name__)
+
+# The official URL for the EMA medicines data Excel file
+EMA_EXCEL_URL = "https://www.ema.europa.eu/en/documents/report/medicines-output-medicines-report_en.xlsx"
 
 
 @retry(
@@ -14,55 +19,81 @@ logger = logging.getLogger(__name__)
     stop=stop_after_attempt(5),
     reraise=True,
 )
-def download_file(url: str) -> io.BytesIO:
+def _download_file_to_stream(url: str, file_stream: IO[bytes]) -> None:
     """
-    Downloads a file from a URL into an in-memory buffer.
-
-    Includes retry logic with exponential backoff for robustness.
+    Downloads a file from a URL into a byte stream with retry logic.
 
     Args:
-        url: The URL of the file to download.
-
-    Returns:
-        An in-memory BytesIO buffer containing the file content.
-
-    Raises:
-        requests.exceptions.RequestException: If the download fails after all retries.
+        url: The URL to download the file from.
+        file_stream: A file-like object opened in binary write mode.
     """
-    logger.info(f"Downloading file from {url}...")
+    logger.info(f"Attempting to download file from: {url}")
     try:
-        response = requests.get(url, timeout=60)
-        response.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx)
-        logger.info(f"Successfully downloaded file from {url} ({len(response.content)} bytes).")
-        return io.BytesIO(response.content)
+        with requests.get(url, stream=True, timeout=60) as response:
+            response.raise_for_status()
+            for chunk in response.iter_content(chunk_size=8192):
+                file_stream.write(chunk)
     except requests.exceptions.RequestException as e:
-        logger.error(f"Attempt to download {url} failed: {e}")
+        logger.error(f"Failed to download file from {url}: {e}")
         raise
 
 
-def parse_excel_data(file_content: io.BytesIO) -> Iterator[Dict[str, Any]]:
+def download_file_to_memory(url: str) -> io.BytesIO:
     """
-    Parses an Excel file from an in-memory buffer and yields rows as dictionaries.
-
-    Assumes the first row is the header.
+    Downloads a file from a URL into an in-memory BytesIO stream.
 
     Args:
-        file_content: A BytesIO buffer containing the Excel file content.
+        url: The URL to download the file from.
 
-    Yields:
-        A dictionary for each row, with column headers as keys.
+    Returns:
+        An io.BytesIO object containing the file content.
     """
-    logger.info("Parsing Excel data from in-memory buffer.")
-    workbook = openpyxl.load_workbook(file_content)
-    sheet = workbook.active
+    memory_file = io.BytesIO()
+    _download_file_to_stream(url, memory_file)
+    memory_file.seek(0)  # Rewind the stream to the beginning for reading
+    logger.info(f"Successfully downloaded file from {url} into memory.")
+    return memory_file
 
-    # Read the header row and clean up names (e.g., convert to string, strip whitespace)
-    header = [str(cell.value).strip() for cell in sheet[1]]
-    logger.debug(f"Parsed header row: {header}")
 
-    # Iterate over the rest of the rows
-    for row in sheet.iter_rows(min_row=2):
-        row_data = {header[i]: cell.value for i, cell in enumerate(row)}
-        yield row_data
+def download_document_and_hash(
+    url: str, storage: IStorage, object_name_prefix: str = "documents"
+) -> Tuple[str, str]:
+    """
+    Downloads a document to memory, calculates its hash, and saves it via a
+    storage adapter.
 
-    logger.info("Finished parsing Excel data.")
+    The object name is derived from the URL's filename.
+
+    Args:
+        url: The URL of the document to download.
+        storage: An instance of a storage adapter (e.g., LocalStorage, S3Storage).
+        object_name_prefix: A prefix for the object name in the storage backend.
+
+    Returns:
+        A tuple containing the storage URI of the saved file and its SHA-256 hash.
+    """
+    hasher = hashlib.sha256()
+    filename = url.split("/")[-1] or "downloaded_document"
+    object_name = f"{object_name_prefix}/{filename}"
+
+    # 1. Download the file into an in-memory stream
+    memory_file = download_file_to_memory(url)
+
+    # 2. Calculate the hash from the in-memory stream
+    # Iterate over the stream in chunks to avoid loading the whole file into
+    # memory again
+    memory_file.seek(0)
+    for chunk in iter(lambda: memory_file.read(4096), b""):
+        hasher.update(chunk)
+    file_hash = hasher.hexdigest()
+
+    # Rewind the stream again before passing it to the storage adapter
+    memory_file.seek(0)
+
+    # 3. Use the storage adapter to save the file
+    storage_uri = storage.save(data_stream=memory_file, object_name=object_name)
+
+    logger.info(
+        f"Processed document from {url}, stored at {storage_uri} with hash {file_hash}"
+    )
+    return storage_uri, file_hash

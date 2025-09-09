@@ -1,97 +1,97 @@
 import datetime
-from unittest.mock import MagicMock
+import io
+from unittest.mock import patch
 
-import pytest
 from py_load_epar.config import Settings
-from py_load_epar.etl.extract import extract_data, CDC_COLUMN_NAME
+from py_load_epar.etl.extract import extract_data
 
 
-@pytest.fixture
-def mock_settings() -> Settings:
-    """Fixture to provide a default Settings object for tests."""
-    return Settings()
-
-
-@pytest.fixture
-def mock_parsed_data() -> list[dict]:
-    """Fixture to provide a sample of parsed records from the Excel file."""
-    return [
-        {
-            "Medicine name": "MedA",
-            CDC_COLUMN_NAME: datetime.datetime(2023, 5, 20),
-        },
-        {
-            "Medicine name": "MedB",
-            CDC_COLUMN_NAME: datetime.datetime(2023, 6, 1),
-        },
-        {
-            "Medicine name": "MedC",
-            CDC_COLUMN_NAME: datetime.datetime(2023, 7, 15),
-        },
-        {
-            "Medicine name": "MedD_bad_date",
-            CDC_COLUMN_NAME: "invalid-date-format",
-        },
-        {
-            "Medicine name": "MedE_no_date",
-            "Some other column": "some value",
-        },
-    ]
-
-
-def test_extract_data_no_high_water_mark(monkeypatch, mock_settings, mock_parsed_data):
+def test_extract_data_uses_downloader_and_parser():
     """
-    Tests that all valid records are extracted when no high_water_mark is provided.
+    Tests that extract_data correctly orchestrates the downloader and parser modules.
     """
-    # Mock the downloader functions
-    mock_download = MagicMock(return_value="dummy_bytes")
-    mock_parse = MagicMock(return_value=iter(mock_parsed_data))
-    monkeypatch.setattr("py_load_epar.etl.extract.download_file", mock_download)
-    monkeypatch.setattr("py_load_epar.etl.extract.parse_excel_data", mock_parse)
+    settings = Settings()
+    # We use mock context managers to patch the dependencies of the extract_data function
+    with patch("py_load_epar.etl.extract.download_file_to_memory") as mock_download, \
+         patch("py_load_epar.etl.extract.parse_ema_excel_file") as mock_parse:
 
-    result = list(extract_data(settings=mock_settings, high_water_mark=None))
+        # --- Arrange ---
+        # Configure the mocks to return dummy values
+        fake_file_stream = io.BytesIO(b"fake excel data")
+        mock_download.return_value = fake_file_stream
+        # The parser mock yields an empty iterator to prevent processing loops
+        mock_parse.return_value = iter([])
 
-    # Should return the 3 valid records
-    assert len(result) == 3
-    assert result[0]["Medicine name"] == "MedA"
-    assert result[1]["Medicine name"] == "MedB"
-    assert result[2]["Medicine name"] == "MedC"
-    mock_download.assert_called_once()
-    mock_parse.assert_called_once()
+        # --- Act ---
+        # Consume the iterator from extract_data to ensure the code runs
+        list(extract_data(settings=settings))
+
+        # --- Assert ---
+        # Check that the downloader was called with the correct URL
+        mock_download.assert_called_once_with(url=settings.etl.epar_data_url)
+
+        # Check that the parser was called with the stream returned by the downloader
+        mock_parse.assert_called_once_with(fake_file_stream)
 
 
-def test_extract_data_with_high_water_mark(monkeypatch, mock_settings, mock_parsed_data):
+def test_extract_data_renames_fields_correctly():
     """
-    Tests that only records with a last_update_date > high_water_mark are extracted.
+    Tests that extract_data correctly renames raw fields from the parser
+    to the field names expected by the Pydantic models.
     """
-    mock_download = MagicMock(return_value="dummy_bytes")
-    mock_parse = MagicMock(return_value=iter(mock_parsed_data))
-    monkeypatch.setattr("py_load_epar.etl.extract.download_file", mock_download)
-    monkeypatch.setattr("py_load_epar.etl.extract.parse_excel_data", mock_parse)
+    settings = Settings()
+    with patch("py_load_epar.etl.extract.download_file_to_memory"), \
+         patch("py_load_epar.etl.extract.parse_ema_excel_file") as mock_parse:
 
-    # Set the high_water_mark to the date of the second record
-    high_water_mark = datetime.date(2023, 6, 1)
+        # Arrange: Mock the parser to return a record with the "raw" field names
+        mock_parse.return_value = iter([
+            {
+                "revision_date": datetime.date(2024, 1, 15),
+                "marketing_authorisation_holder_company_name": "Test MAH",
+                "active_substance": "Test Substance",
+                "u_r_l": "http://example.com"
+            }
+        ])
 
-    result = list(extract_data(settings=mock_settings, high_water_mark=high_water_mark))
+        # Act
+        records = list(extract_data(settings=settings))
 
-    # Should only return the third record ("MedC")
-    assert len(result) == 1
-    assert result[0]["Medicine name"] == "MedC"
+        # Assert
+        assert len(records) == 1
+        record = records[0]
+        assert "last_update_date_source" in record
+        assert "marketing_authorization_holder_raw" in record
+        assert "active_substance_raw" in record
+        assert "source_url" in record
+        assert record["last_update_date_source"] == datetime.date(2024, 1, 15)
+        assert record["marketing_authorization_holder_raw"] == "Test MAH"
+        assert record["active_substance_raw"] == "Test Substance"
+        assert record["source_url"] == "http://example.com"
 
 
-def test_extract_data_no_new_records(monkeypatch, mock_settings, mock_parsed_data):
+def test_extract_data_filters_by_high_water_mark():
     """
-    Tests that no records are returned if the high_water_mark is up to date.
+    Tests the CDC (Change Data Capture) logic of extract_data, ensuring it
+    correctly filters out records that are not newer than the high_water_mark.
     """
-    mock_download = MagicMock(return_value="dummy_bytes")
-    mock_parse = MagicMock(return_value=iter(mock_parsed_data))
-    monkeypatch.setattr("py_load_epar.etl.extract.download_file", mock_download)
-    monkeypatch.setattr("py_load_epar.etl.extract.parse_excel_data", mock_parse)
+    settings = Settings()
+    # Records with a date on or before the HWM should be filtered out
+    high_water_mark = datetime.datetime(2024, 2, 15)
 
-    # Set the high_water_mark to the date of the last valid record
-    high_water_mark = datetime.date(2023, 7, 15)
+    with patch("py_load_epar.etl.extract.download_file_to_memory"), \
+         patch("py_load_epar.etl.extract.parse_ema_excel_file") as mock_parse:
 
-    result = list(extract_data(settings=mock_settings, high_water_mark=high_water_mark))
+        # Arrange: Mock the parser to return a list of records with various dates
+        mock_parse.return_value = iter([
+            {"medicine_name": "OldMed", "revision_date": datetime.date(2024, 1, 15)},
+            {"medicine_name": "SameDayMed", "revision_date": datetime.date(2024, 2, 15)},
+            {"medicine_name": "NewMed", "revision_date": datetime.date(2024, 2, 16)},
+        ])
 
-    # Should return no records
-    assert len(result) == 0
+        # Act: Call the function and get the list of processed records
+        records = list(extract_data(settings=settings, high_water_mark=high_water_mark))
+
+        # Assert: Only the record with a date after the HWM should be yielded
+        assert len(records) == 1
+        assert records[0]["medicine_name"] == "NewMed"
+        assert records[0]["last_update_date_source"] == datetime.date(2024, 2, 16)

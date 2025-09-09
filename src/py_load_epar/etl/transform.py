@@ -15,11 +15,13 @@ from py_load_epar.spor_api.client import SporApiClient
 logger = logging.getLogger(__name__)
 
 
-def transform_and_validate(
+def transform_and_validate(  # noqa: C901
     raw_records: Iterator[Dict[str, Any]],
     spor_client: SporApiClient,
     execution_id: int,
-) -> Iterator[Tuple[EparIndex, List[EparSubstanceLink], List[Organization], List[Substance]]]:
+) -> Iterator[
+    Tuple[EparIndex, List[EparSubstanceLink], List[Organization], List[Substance]]
+]:
     """
     Transforms raw data, validates it, and enriches it with SPOR API data.
 
@@ -48,7 +50,7 @@ def transform_and_validate(
 
     for i, raw_record in enumerate(raw_records):
         try:
-            # Use the 'product_number' field from the source data as the stable unique ID.
+            # Use 'product_number' from source as the stable unique ID.
             product_number = raw_record.get("product_number")
             if not product_number:
                 raise ValueError(
@@ -83,7 +85,10 @@ def transform_and_validate(
                         oms_id=org_api.org_id, organization_name=org_api.name
                     )
                     organizations.append(org_db)
-                    logger.debug(f"Enriched MAH '{org_api.name}' with OMS ID {org_api.org_id}")
+                    logger.debug(
+                        f"Enriched MAH '{org_api.name}' with OMS ID "
+                        f"{org_api.org_id}"
+                    )
 
             # 4. Enrich Substances, create link records, and capture master data
             if validated_model.active_substance_raw:
@@ -107,7 +112,10 @@ def transform_and_validate(
                             substance_name=sub_api.name,
                         )
                         substances.append(sub_db)
-                        logger.debug(f"Enriched substance '{sub_api.name}' with SMS ID {sub_api.sms_id}")
+                        logger.debug(
+                            f"Enriched substance '{sub_api.name}' with SMS "
+                            f"ID {sub_api.sms_id}"
+                        )
 
             yield validated_model, substance_links, organizations, substances
             validated_count += 1
@@ -124,5 +132,6 @@ def transform_and_validate(
             continue
 
     logger.info(
-        f"Finished transformation. Processed: {validated_count}. Failed: {failed_count}."
+        f"Finished transformation. Processed: {validated_count}. "
+        f"Failed: {failed_count}."
     )

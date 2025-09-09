@@ -8,7 +8,6 @@ from moto import mock_aws
 from py_load_epar.storage.local import LocalStorage
 from py_load_epar.storage.s3 import S3Storage
 
-
 # --- Tests for LocalStorage ---
 
 def test_local_storage_save(tmp_path: Path):

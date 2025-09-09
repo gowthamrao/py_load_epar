@@ -1,8 +1,7 @@
 import datetime
 import logging
 import uuid
-from pathlib import Path
-from typing import Iterator, List, Tuple, TypeVar
+from typing import Iterator, List, TypeVar
 from urllib.parse import urljoin
 
 import requests
@@ -14,8 +13,6 @@ from py_load_epar.db.factory import get_db_adapter
 from py_load_epar.db.interfaces import IDatabaseAdapter
 from py_load_epar.etl.downloader import download_document_and_hash
 from py_load_epar.etl.extract import extract_data
-from py_load_epar.storage.factory import StorageFactory
-from py_load_epar.storage.interfaces import IStorage
 from py_load_epar.etl.transform import transform_and_validate
 from py_load_epar.models import (
     EparDocument,
@@ -25,6 +22,8 @@ from py_load_epar.models import (
     Substance,
 )
 from py_load_epar.spor_api.client import SporApiClient
+from py_load_epar.storage.factory import StorageFactory
+from py_load_epar.storage.interfaces import IStorage
 
 logger = logging.getLogger(__name__)
 
@@ -200,7 +199,8 @@ def _process_documents(
                     doc_url = urljoin(record.source_url, href)
 
                     logger.info(
-                        f"Found document '{link_text}' at {doc_url} for EPAR {record.epar_id}"
+                        f"Found document '{link_text}' at {doc_url} for "
+                        f"EPAR {record.epar_id}"
                     )
 
                     # 5. Download the document
@@ -237,8 +237,8 @@ def _process_documents(
             continue
         except Exception as e:
             logger.error(
-                f"An unexpected error occurred while processing documents for EPAR {record.epar_id} "
-                f"from {record.source_url}: {e}"
+                f"An unexpected error occurred while processing documents for "
+                f"EPAR {record.epar_id} from {record.source_url}: {e}"
             )
             continue
 
@@ -375,7 +375,9 @@ def run_etl(settings: Settings) -> None:
         )
 
         # 6. Process documents now that epar_index is populated
-        logger.info(f"Processing documents for {len(all_epar_records)} total EPAR records.")
+        logger.info(
+            f"Processing docs for {len(all_epar_records)} EPAR records."
+        )
         _process_documents(
             adapter=adapter, processed_records=all_epar_records, storage=storage
         )

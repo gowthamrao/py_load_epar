@@ -2,7 +2,7 @@ import os
 from typing import Any, Optional
 
 import yaml
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -24,9 +24,6 @@ class DatabaseSettings(BaseSettings):
     def dsn(self) -> str:
         """Data Source Name for connecting to the database."""
         return f"{self.type}://{self.user}:{self.password}@{self.host}:{self.port}/{self.dbname}"
-
-
-from pydantic import SecretStr
 
 
 class SporApiSettings(BaseSettings):
