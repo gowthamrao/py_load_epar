@@ -81,7 +81,11 @@ def test_run_etl_successful_flow(
     assert mock_process_substances.call_count == 2
     mock_process_substances.assert_any_call(mock_adapter, ["sub1"])
     mock_process_links.assert_called_once_with(mock_adapter, substance_links)
-    assert mock_process_docs.call_count == 2
+    mock_process_docs.assert_called_once_with(
+        adapter=mock_adapter,
+        processed_records=[record1, record2],
+        storage=mock_storage_instance,
+    )
     mock_adapter.close.assert_called_once()
 
 
