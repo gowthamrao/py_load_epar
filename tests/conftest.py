@@ -1,5 +1,6 @@
 import datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 import openpyxl
 import pytest
@@ -9,7 +10,7 @@ from py_load_epar.config import DatabaseSettings, Settings
 from py_load_epar.db.postgres import PostgresAdapter
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def create_sample_excel_file():
     """
     A session-scoped fixture that creates the sample Excel file needed for tests.
@@ -124,22 +125,26 @@ def create_sample_excel_file():
 
 
 @pytest.fixture(scope="module")
-def postgres_container():
+def postgres_container(request):
     """Fixture to start and stop a PostgreSQL test container."""
-    with PostgresContainer("postgres:16-alpine") as postgres:
-        yield postgres
+    postgres = PostgresContainer("postgres:16-alpine")
+    postgres.start()
+    request.addfinalizer(postgres.stop)
+    return postgres
 
 
 @pytest.fixture(scope="function")
 def db_settings(postgres_container: PostgresContainer) -> Settings:
     """Fixture to create a DatabaseSettings object from the test container."""
+    connection_url = postgres_container.get_connection_url()
+    parsed_url = urlparse(connection_url)
     return Settings(
         db=DatabaseSettings(
-            host=postgres_container.get_container_host_ip(),
-            port=postgres_container.get_exposed_port(5432),
-            user=postgres_container.username,
-            password=postgres_container.password,
-            dbname=postgres_container.dbname,
+            host=parsed_url.hostname,
+            port=parsed_url.port,
+            user=parsed_url.username,
+            password=parsed_url.password,
+            dbname=parsed_url.path.lstrip("/"),
         )
     )
 
