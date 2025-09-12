@@ -52,8 +52,10 @@ def test_run_etl_successful_flow(
 
     record1 = MagicMock(spec=EparIndex)
     record1.last_update_date_source = datetime.date(2024, 1, 1)
+    record1.source_url = "http://example.com/doc1"
     record2 = MagicMock(spec=EparIndex)
     record2.last_update_date_source = datetime.date(2024, 1, 2)
+    record2.source_url = None
     substance_links = [MagicMock(spec=EparSubstanceLink)]
 
     # Mock transform to return the new 4-tuple format
@@ -81,9 +83,10 @@ def test_run_etl_successful_flow(
     assert mock_process_substances.call_count == 2
     mock_process_substances.assert_any_call(mock_adapter, ["sub1"])
     mock_process_links.assert_called_once_with(mock_adapter, substance_links)
+    # _process_documents is now only called with records that have a valid URL
     mock_process_docs.assert_called_once_with(
         adapter=mock_adapter,
-        processed_records=[record1, record2],
+        processed_records=[record1],  # record2 has a None URL
         storage=mock_storage_instance,
     )
     mock_adapter.close.assert_called_once()
