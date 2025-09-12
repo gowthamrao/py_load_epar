@@ -248,3 +248,70 @@ def test_document_processing(
         assert storage_location is not None
         assert "document.pdf" in storage_location
         assert storage_location.startswith("file://")
+
+
+def test_full_load_idempotency(
+    postgres_adapter: PostgresAdapter,
+    db_settings: Settings,
+    mocker,
+    single_record_excel_file: Path,
+):
+    """
+    Tests that running a FULL load twice results in the same database state.
+    This ensures that the FULL load process is idempotent and doesn't create
+    duplicate records or change data on subsequent runs.
+    """
+    # --- Mock dependencies to ensure a consistent run ---
+    # Mock get_db_adapter to return the adapter from our fixture, preventing new connections
+    mocker.patch("py_load_epar.etl.orchestrator.get_db_adapter", return_value=postgres_adapter)
+    # The fixture adapter is already connected, so we can patch connect to do nothing
+    mocker.patch("py_load_epar.db.postgres.PostgresAdapter.connect")
+    # We also patch close to prevent run_etl from closing our fixture's connection
+    mocker.patch("py_load_epar.db.postgres.PostgresAdapter.close")
+
+
+    mocker.patch(
+        "py_load_epar.etl.extract.download_file_to_memory",
+        return_value=single_record_excel_file.open("rb"),
+    )
+    mock_spor_client = mocker.patch("py_load_epar.etl.orchestrator.SporApiClient")
+    mock_spor_client.return_value.search_organisation.return_value = None
+    mock_spor_client.return_value.search_substance.return_value = None
+    mocker.patch("py_load_epar.etl.orchestrator._process_documents", return_value=0)
+
+    # --- Run ETL the first time ---
+    settings = db_settings
+    settings.etl.load_strategy = "FULL"
+    run_etl(settings)
+
+    # --- Capture the state of the database ---
+    def get_db_state(adapter):
+        with adapter.conn.cursor() as cursor:
+            cursor.execute("SELECT COUNT(*) FROM epar_index")
+            count = cursor.fetchone()[0]
+            # Select all columns except the audit timestamp and execution ID
+            cursor.execute(
+                """
+                SELECT
+                    epar_id, medicine_name, authorization_status,
+                    first_authorization_date, withdrawal_date,
+                    last_update_date_source, active_substance_raw,
+                    marketing_authorization_holder_raw, therapeutic_area,
+                    mah_oms_id, is_active, source_url
+                FROM epar_index ORDER BY epar_id
+                """
+            )
+            data = cursor.fetchall()
+            return count, data
+
+    first_run_count, first_run_data = get_db_state(postgres_adapter)
+    assert first_run_count > 0  # Ensure some data was loaded
+
+    # --- Run ETL the second time ---
+    run_etl(settings)
+
+    # --- Assert that the state is identical ---
+    second_run_count, second_run_data = get_db_state(postgres_adapter)
+
+    assert second_run_count == first_run_count
+    assert second_run_data == first_run_data

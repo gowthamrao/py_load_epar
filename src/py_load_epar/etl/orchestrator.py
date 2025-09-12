@@ -178,14 +178,20 @@ def _process_documents(
         try:
             # 1. Fetch the HTML of the EPAR summary page with retry
             html_content = _fetch_html_with_retry(record.source_url)
-
-            # 2. Parse the HTML
             soup = BeautifulSoup(html_content, "html.parser")
-
-            # 3. Find and process all relevant document links
             links = soup.find_all("a", href=True)
             found_docs_for_record = False
-            for link in links:
+
+        except requests.exceptions.RequestException as e:
+            logger.error(
+                f"Failed to fetch or parse HTML for EPAR {record.epar_id} "
+                f"from {record.source_url}: {e}"
+            )
+            continue  # Skip to the next record
+
+        # 3. Find and process all relevant document links
+        for link in links:
+            try:
                 link_text = link.get_text(strip=True).lower()
                 href = link["href"]
 
@@ -210,30 +216,32 @@ def _process_documents(
                     doc = EparDocument(
                         document_id=uuid.uuid4(),
                         epar_id=record.epar_id,
-                        document_type=link_text,  # Use the link text as the doc type
-                        language_code="en",  # Assuming 'en', might need refinement
+                        document_type=link_text,
+                        language_code="en",
                         source_url=doc_url,
                         storage_location=storage_uri,
                         file_hash=file_hash,
-                        download_timestamp=datetime.datetime.now(datetime.timezone.utc),
+                        download_timestamp=datetime.datetime.now(
+                            datetime.timezone.utc
+                        ),
                     )
                     document_records.append(doc)
                     found_docs_for_record = True
 
-            if not found_docs_for_record:
-                logger.warning(
-                    "Could not find any downloadable PDF documents on page: "
-                    f"{record.source_url}"
+            except Exception as e:
+                # Catch exceptions on a per-link basis
+                logger.error(
+                    f"Failed to process document link for EPAR {record.epar_id} "
+                    f"from {record.source_url}: {e}",
+                    exc_info=True,
                 )
+                continue  # Continue to the next link
 
-        except Exception as e:
-            # Catch any exception during the processing of a single document
-            # to ensure that the entire ETL process does not fail.
-            logger.error(
-                f"An unexpected error occurred while processing documents for "
-                f"EPAR {record.epar_id} from {record.source_url}: {e}"
+        if not found_docs_for_record:
+            logger.warning(
+                "Could not find any downloadable PDF documents on page: "
+                f"{record.source_url}"
             )
-            continue
 
     if not document_records:
         logger.info("No new documents were found or processed.")

@@ -35,6 +35,7 @@ def test_etl_populates_master_data(
             "last_update_date_source": datetime.date(2024, 1, 1),
             "authorization_status": "Authorised",
             "source_url": "http://fake-url.com/1",
+            "therapeutic_area": "Testing",
         },
         {
             "product_number": "TEST/002",
@@ -44,6 +45,7 @@ def test_etl_populates_master_data(
             "last_update_date_source": datetime.date(2024, 1, 2),
             "authorization_status": "Authorised",
             "source_url": "http://fake-url.com/2",
+            "therapeutic_area": "Testing",
         },
         {
             "product_number": "TEST/003",
@@ -53,6 +55,7 @@ def test_etl_populates_master_data(
             "last_update_date_source": datetime.date(2024, 1, 3),
             "authorization_status": "Authorised",
             "source_url": "http://fake-url.com/3",
+            "therapeutic_area": "Testing",
         },
     ]
 
