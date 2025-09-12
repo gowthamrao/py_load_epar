@@ -69,8 +69,12 @@ def extract_data(  # noqa: C901
             record["marketing_authorization_holder_raw"] = record.pop(
                 "marketing_authorisation_holder_company_name"
             )
-        if "active_substance" in record:
-            record["active_substance_raw"] = record.pop("active_substance")
+        record["active_substance_raw"] = record.pop("active_substance", None)
+        if record["active_substance_raw"] is None:
+            logger.warning(
+                f"Record missing 'active_substance'. Skipping. Record: {record}"
+            )
+            continue
 
         # The 'URL' column from the sheet is snake_cased to 'u_r_l' by the parser.
         # We map it to the 'source_url' field in our Pydantic model.
