@@ -56,7 +56,7 @@ class EparIndex(BaseModel):
     # Standard Representation (Raw values)
     active_substance_raw: Optional[str] = None
     marketing_authorization_holder_raw: Optional[str] = Field(None, max_length=500)
-    therapeutic_area: Optional[str] = Field(None, max_length=500)
+    therapeutic_area: str = Field(..., max_length=500)
 
     # Full Representation (Enriched & standardized)
     mah_oms_id: Optional[str] = Field(None, max_length=50)
