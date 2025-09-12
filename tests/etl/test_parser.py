@@ -11,7 +11,7 @@ SAMPLE_FILE_PATH = TEST_DATA_DIR / "sample_ema_data.xlsx"
 
 
 @pytest.fixture
-def sample_file() -> Path:
+def sample_file(create_sample_excel_file: None) -> Path:
     """Fixture to provide the path to the sample Excel file and check for its existence."""
     if not SAMPLE_FILE_PATH.exists():
         pytest.fail(f"Test data file not found at: {SAMPLE_FILE_PATH}")
