@@ -58,6 +58,21 @@ def parse_ema_excel_file(
         headers = [_snake_case(cell.value) for cell in sheet[1]]
         logger.debug(f"Parsed Excel headers: {headers}")
 
+        # --- Validate that all critical columns are present ---
+        # These are the raw column names expected from the source file,
+        # but snake_cased.
+        required_columns = {
+            "medicine_name",
+            "product_number",
+            "authorization_status", # Use canonical 'z' spelling
+            "u_r_l",  # "URL" becomes "u_r_l" after snake_casing
+        }
+        missing_columns = required_columns - set(headers)
+        if missing_columns:
+            raise ValueError(
+                f"Missing critical columns from source file: {sorted(list(missing_columns))}"
+            )
+
         # Yield each subsequent row as a dictionary mapped by the headers
         for row in sheet.iter_rows(min_row=2, values_only=True):
             # Skip empty rows

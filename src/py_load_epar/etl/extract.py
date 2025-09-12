@@ -94,6 +94,10 @@ def extract_data(  # noqa: C901
                     continue
 
         # Rename keys from parser output to match Pydantic model fields
+        # Handle inconsistent spelling of 'authorization'
+        if "authorisation_status" in record and "authorization_status" not in record:
+            record["authorization_status"] = record.pop("authorisation_status")
+
         if "marketing_authorisation_holder_company_name" in record:
             record["marketing_authorization_holder_raw"] = record.pop(
                 "marketing_authorisation_holder_company_name"
