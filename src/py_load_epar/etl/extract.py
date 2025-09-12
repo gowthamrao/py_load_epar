@@ -1,7 +1,9 @@
 import datetime
+import datetime
 import logging
 from typing import Any, Dict, Iterator
 
+import pandas as pd
 from py_load_epar.config import Settings
 from py_load_epar.etl.downloader import download_file_to_memory
 from py_load_epar.etl.parser import parse_ema_excel_file
@@ -64,13 +66,44 @@ def extract_data(  # noqa: C901
         # The Pydantic model expects 'last_update_date_source'
         record["last_update_date_source"] = record_date
 
+        # Coerce 'marketing_authorisation_date' to a date object, skipping
+        # the record on failure. This ensures that malformed dates do not
+        # silently become None during Pydantic validation.
+        auth_date_val = record.get("marketing_authorisation_date")
+        if auth_date_val:
+            if isinstance(auth_date_val, datetime.datetime):
+                record["marketing_authorisation_date"] = auth_date_val.date()
+            elif isinstance(auth_date_val, datetime.date):
+                # It's already a date, no action needed
+                pass
+            else:
+                try:
+                    # Pandas sometimes reads dates as timestamps, handle that
+                    if isinstance(auth_date_val, pd.Timestamp):
+                        record["marketing_authorisation_date"] = auth_date_val.date()
+                    else:
+                        # Otherwise, attempt to parse from string
+                        record["marketing_authorisation_date"] = datetime.datetime.fromisoformat(
+                            str(auth_date_val)
+                        ).date()
+                except (ValueError, TypeError):
+                    logger.warning(
+                        f"Could not parse marketing_authorisation_date "
+                        f"'{auth_date_val}'. Skipping record."
+                    )
+                    continue
+
         # Rename keys from parser output to match Pydantic model fields
         if "marketing_authorisation_holder_company_name" in record:
             record["marketing_authorization_holder_raw"] = record.pop(
                 "marketing_authorisation_holder_company_name"
             )
-        if "active_substance" in record:
-            record["active_substance_raw"] = record.pop("active_substance")
+        record["active_substance_raw"] = record.pop("active_substance", None)
+        if record["active_substance_raw"] is None:
+            logger.warning(
+                f"Record missing 'active_substance'. Skipping. Record: {record}"
+            )
+            continue
 
         # The 'URL' column from the sheet is snake_cased to 'u_r_l' by the parser.
         # We map it to the 'source_url' field in our Pydantic model.

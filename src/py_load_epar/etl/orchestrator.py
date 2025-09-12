@@ -367,11 +367,17 @@ def run_etl(settings: Settings) -> None:
             primary_key_columns=["epar_id"],
         )
 
-        # 6. Process documents now that epar_index is populated
-        logger.info(f"Processing docs for {len(all_epar_records)} EPAR records.")
-        _process_documents(
-            adapter=adapter, processed_records=all_epar_records, storage=storage
-        )
+        # 6. Process documents only if there are records with a source URL
+        records_with_urls = [
+            r for r in all_epar_records if r.source_url and r.source_url.startswith("http")
+        ]
+        if records_with_urls:
+            logger.info(
+                f"Processing documents for {len(records_with_urls)} EPAR records with URLs."
+            )
+            _process_documents(
+                adapter=adapter, processed_records=records_with_urls, storage=storage
+            )
 
         # 7. Load substance links now that epar_index is populated
         logger.info(f"Processing {len(all_substance_links)} total substance links.")
