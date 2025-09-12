@@ -119,7 +119,7 @@ def test_document_download_failure(
         assert cursor.fetchone()[0] == 0
 
     # Assert that the error was logged
-    assert "An unexpected error occurred while processing documents" in caplog.text
+        assert "Failed to process document link" in caplog.text
     assert "Simulated download failure" in caplog.text
 
 
