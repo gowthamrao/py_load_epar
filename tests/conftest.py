@@ -10,7 +10,7 @@ from py_load_epar.config import DatabaseSettings, Settings
 from py_load_epar.db.postgres import PostgresAdapter
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="session", autouse=True)
 def create_sample_excel_file():
     """
     A session-scoped fixture that creates the sample Excel file needed for tests.
