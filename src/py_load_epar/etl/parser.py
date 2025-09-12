@@ -18,7 +18,7 @@ def _snake_case(s: str) -> str:
     # Replace known separators with underscore
     s = re.sub(r"[ -/]", "_", s)
     # Handle camelCase by inserting underscore before uppercase letters
-    s = re.sub(r"(?<=\w)([A-Z])", r"_\1", s)
+    s = re.sub(r"(?<=[a-zA-Z0-9])([A-Z])", r"_\1", s)
     # Remove any characters that are not alphanumeric or underscore
     s = re.sub(r"[^a-zA-Z0-9_]", "", s)
     return s.lower()
