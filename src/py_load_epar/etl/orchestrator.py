@@ -226,10 +226,9 @@ def _process_documents(
                     f"{record.source_url}"
                 )
 
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to fetch HTML for EPAR page {record.source_url}: {e}")
-            continue
         except Exception as e:
+            # Catch any exception during the processing of a single document
+            # to ensure that the entire ETL process does not fail.
             logger.error(
                 f"An unexpected error occurred while processing documents for "
                 f"EPAR {record.epar_id} from {record.source_url}: {e}"
