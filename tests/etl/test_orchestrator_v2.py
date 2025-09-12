@@ -1,7 +1,9 @@
 import datetime
 from unittest.mock import MagicMock
 
-from py_load_epar.etl.orchestrator import _process_documents
+import pytest
+import requests
+from py_load_epar.etl.orchestrator import _fetch_html_with_retry, _process_documents
 from py_load_epar.models import EparIndex
 from py_load_epar.storage.interfaces import IStorage
 
@@ -98,3 +100,51 @@ def test_process_documents_parses_html_and_downloads(mocker):
     assert doc_dict["storage_location"] == fake_storage_uri
     assert doc_dict["file_hash"] == fake_hash
     assert "public assessment report" in doc_dict["document_type"]
+
+
+def test_fetch_html_with_retry_succeeds_after_failures(mocker):
+    """
+    Tests that the _fetch_html_with_retry function correctly retries upon failure
+    and eventually succeeds.
+    """
+    # Arrange
+    mock_get = mocker.patch("requests.get")
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.content = b"Success"
+    mock_response.raise_for_status.return_value = None
+
+    # Simulate failure on the first 2 calls, then success
+    mock_get.side_effect = [
+        requests.exceptions.RequestException("Connection error"),
+        requests.exceptions.RequestException("Timeout"),
+        mock_response,
+    ]
+
+    # Act
+    # We need to import the function from the module where it's defined to patch it.
+    from py_load_epar.etl.orchestrator import _fetch_html_with_retry
+
+    result = _fetch_html_with_retry("http://test.com")
+
+    # Assert
+    assert result == b"Success"
+    assert mock_get.call_count == 3
+
+
+def test_fetch_html_with_retry_fails_after_all_attempts(mocker):
+    """
+    Tests that the _fetch_html_with_retry function raises an exception after
+    exhausting all retry attempts.
+    """
+    # Arrange
+    mock_get = mocker.patch("requests.get")
+    mock_get.side_effect = requests.exceptions.RequestException("Persistent error")
+
+    # Act & Assert
+    from py_load_epar.etl.orchestrator import _fetch_html_with_retry
+
+    with pytest.raises(requests.exceptions.RequestException):
+        _fetch_html_with_retry("http://test.com")
+
+    assert mock_get.call_count == 5  # As defined by the @retry decorator
