@@ -75,23 +75,29 @@ def transform_and_validate(  # noqa: C901
 
             # 3. Enrich Organisation (MAH) and capture master data
             if validated_model.marketing_authorization_holder_raw:
-                org_api = spor_client.search_organisation(
-                    validated_model.marketing_authorization_holder_raw
-                )
-                if org_api:
-                    validated_model.mah_oms_id = org_api.org_id
-                    # Map API model to DB model
-                    org_db = Organization(
-                        oms_id=org_api.org_id, organization_name=org_api.name
+                try:
+                    org_api = spor_client.search_organisation(
+                        validated_model.marketing_authorization_holder_raw
                     )
-                    organizations.append(org_db)
-                    logger.debug(
-                        f"Enriched MAH '{org_api.name}' with OMS ID "
-                        f"{org_api.org_id}"
+                    if org_api:
+                        validated_model.mah_oms_id = org_api.org_id
+                        # Map API model to DB model
+                        org_db = Organization(
+                            oms_id=org_api.org_id, organization_name=org_api.name
+                        )
+                        organizations.append(org_db)
+                        logger.debug(
+                            f"Enriched MAH '{org_api.name}' with OMS ID "
+                            f"{org_api.org_id}"
+                        )
+                except Exception as e:
+                    logger.error(
+                        f"SPOR API error during organization search for "
+                        f"'{validated_model.marketing_authorization_holder_raw}': {e}"
                     )
 
             # 4. Enrich Substances, create link records, and capture master data
-            if validated_model.active_substance_raw:
+            if hasattr(validated_model, "active_substance_raw") and validated_model.active_substance_raw:
                 substance_names = re.split(
                     r"[,;]|\s+and\s+", validated_model.active_substance_raw
                 )
@@ -99,30 +105,35 @@ def transform_and_validate(  # noqa: C901
                     sub_name = sub_name_raw.strip()
                     if not sub_name:
                         continue
-                    sub_api = spor_client.search_substance(sub_name)
-                    if sub_api:
-                        link = EparSubstanceLink(
-                            epar_id=validated_model.epar_id,
-                            spor_substance_id=sub_api.sms_id,
-                        )
-                        substance_links.append(link)
-                        # Map API model to DB model
-                        sub_db = Substance(
-                            spor_substance_id=sub_api.sms_id,
-                            substance_name=sub_api.name,
-                        )
-                        substances.append(sub_db)
-                        logger.debug(
-                            f"Enriched substance '{sub_api.name}' with SMS "
-                            f"ID {sub_api.sms_id}"
+                    try:
+                        sub_api = spor_client.search_substance(sub_name)
+                        if sub_api:
+                            link = EparSubstanceLink(
+                                epar_id=validated_model.epar_id,
+                                spor_substance_id=sub_api.sms_id,
+                            )
+                            substance_links.append(link)
+                            # Map API model to DB model
+                            sub_db = Substance(
+                                spor_substance_id=sub_api.sms_id,
+                                substance_name=sub_api.name,
+                            )
+                            substances.append(sub_db)
+                            logger.debug(
+                                f"Enriched substance '{sub_api.name}' with SMS "
+                                f"ID {sub_api.sms_id}"
+                            )
+                    except Exception as e:
+                        logger.error(
+                            f"SPOR API error during substance search for '{sub_name}': {e}"
                         )
 
             yield validated_model, substance_links, organizations, substances
             validated_count += 1
 
-        except ValidationError as e:
+        except (ValidationError, KeyError) as e:
             logger.warning(
-                f"Record {i+1} failed validation. Record: {raw_record}. Error: {e}"
+                f"Record {i+1} failed validation or has missing key. Record: {raw_record}. Error: {e}"
             )
             failed_count += 1
             continue
