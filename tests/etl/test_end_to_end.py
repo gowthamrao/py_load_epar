@@ -250,34 +250,6 @@ def test_document_processing(
         assert storage_location.startswith("file://")
 
 
-@pytest.fixture
-def single_record_excel_file(tmp_path: Path) -> Path:
-    """Creates a sample EMA data file with a single record."""
-    file_path = tmp_path / "single_record_ema_data.xlsx"
-    data = {
-        "Category": ["Human"],
-        "Medicine name": ["TestMed Idempotent"],
-        "Therapeutic area": ["Testing"],
-        "Active substance": ["substance_idem"],
-        "Product number": ["EMA/IDEM"],
-        "Patient safety": [None],
-        "authorization_status": ["Authorised"],
-        "ATC code": ["T01"],
-        "Additional monitoring": [None],
-        "Generic": [False],
-        "Biosimilar": [False],
-        "Conditional approval": [None],
-        "Exceptional circumstances": [None],
-        "Marketing authorisation date": ["2023-01-01"],
-        "Revision date": ["2023-01-15"],
-        "Marketing authorisation holder/company name": ["Idem Corp"],
-        "URL": ["http://example.com/idem"],
-    }
-    df = pd.DataFrame(data)
-    df.to_excel(file_path, index=False, sheet_name="Medicines for human use")
-    return file_path
-
-
 def test_full_load_idempotency(
     postgres_adapter: PostgresAdapter,
     db_settings: Settings,

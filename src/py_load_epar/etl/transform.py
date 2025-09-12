@@ -132,13 +132,13 @@ def transform_and_validate(  # noqa: C901
             validated_count += 1
 
         except (ValidationError, KeyError) as e:
-            logger.warning(
+            logger.error(
                 f"Record {i+1} failed validation or has missing key. Record: {raw_record}. Error: {e}"
             )
             failed_count += 1
             continue
         except ValueError as e:
-            logger.warning(f"Record {i+1} skipped. Record: {raw_record}. Error: {e}")
+            logger.error(f"Record {i+1} skipped. Record: {raw_record}. Error: {e}")
             failed_count += 1
             continue
 

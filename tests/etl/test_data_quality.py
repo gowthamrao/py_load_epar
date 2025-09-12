@@ -104,8 +104,9 @@ def test_etl_resilience_to_data_quality_issues(
     mock_process_docs.assert_not_called()
 
     # Verify that the validation errors were logged
-    assert "failed validation or has missing key" in caplog.text
-    assert "medicine_name" in caplog.text  # Check for the field that failed
+    assert "failed validation" in caplog.text
+    assert "medicine_name" in caplog.text
+    assert "Input should be a valid string" in caplog.text
     assert "Could not parse marketing_authorisation_date" in caplog.text
 
 

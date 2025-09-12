@@ -56,6 +56,7 @@ def test_process_documents_parses_html_and_downloads(mocker):
         authorization_status="Authorised",
         last_update_date_source=datetime.date(2024, 1, 1),
         source_url=epar_page_url,
+        therapeutic_area="Testing",
     )
     processed_records = [record]
 

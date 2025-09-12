@@ -3,6 +3,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import openpyxl
+import pandas as pd
 import pytest
 from testcontainers.postgres import PostgresContainer
 
@@ -171,3 +172,31 @@ def postgres_adapter(db_settings: Settings) -> PostgresAdapter:
         cursor.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
     adapter.conn.commit()
     adapter.close()
+
+
+@pytest.fixture
+def single_record_excel_file(tmp_path: Path) -> Path:
+    """Creates a sample EMA data file with a single record."""
+    file_path = tmp_path / "single_record_ema_data.xlsx"
+    data = {
+        "Category": ["Human"],
+        "Medicine name": ["TestMed Idempotent"],
+        "Therapeutic area": ["Testing"],
+        "Active substance": ["substance_idem"],
+        "Product number": ["EMA/IDEM"],
+        "Patient safety": [None],
+        "authorization_status": ["Authorised"],
+        "ATC code": ["T01"],
+        "Additional monitoring": [None],
+        "Generic": [False],
+        "Biosimilar": [False],
+        "Conditional approval": [None],
+        "Exceptional circumstances": [None],
+        "Marketing authorisation date": ["2023-01-01"],
+        "Revision date": ["2023-01-15"],
+        "Marketing authorisation holder/company name": ["Idem Corp"],
+        "URL": ["http://example.com/idem"],
+    }
+    df = pd.DataFrame(data)
+    df.to_excel(file_path, index=False, sheet_name="Medicines for human use")
+    return file_path

@@ -22,12 +22,14 @@ def sample_data():
             medicine_name="TestMed A",
             authorization_status="Authorised",
             last_update_date_source=datetime.date(2023, 1, 1),
+            therapeutic_area="Testing",
         ),
         EparIndex(
             epar_id="EMA/2",
             medicine_name="TestMed B",
             authorization_status="Authorised",
             last_update_date_source=datetime.date(2023, 1, 2),
+            therapeutic_area="Testing",
         ),
     ]
 
@@ -64,6 +66,7 @@ def test_full_load_strategy(postgres_adapter: PostgresAdapter, sample_data):
             medicine_name="TestMed C",
             authorization_status="Withdrawn",
             last_update_date_source=datetime.date(2023, 2, 1),
+            therapeutic_area="Testing",
         )
     ]
     data_iterator_2 = (
@@ -118,12 +121,14 @@ def test_delta_load_strategy(postgres_adapter: PostgresAdapter, sample_data):
             medicine_name="TestMed B Updated",
             authorization_status="Authorised",
             last_update_date_source=datetime.date(2023, 1, 2),
+            therapeutic_area="Testing",
         ),  # Update
         EparIndex(
             epar_id="EMA/3",
             medicine_name="TestMed C New",
             authorization_status="Authorised",
             last_update_date_source=datetime.date(2023, 2, 1),
+            therapeutic_area="Testing",
         ),  # Insert
     ]
     data_iterator_2 = (
@@ -169,18 +174,21 @@ def test_delta_load_soft_delete(postgres_adapter: PostgresAdapter):
             medicine_name="Active Med A",
             authorization_status="Authorised",
             last_update_date_source=datetime.date(2023, 1, 1),
+            therapeutic_area="Testing",
         ),
         EparIndex(
             epar_id="EMA/2",
             medicine_name="Active Med B",
             authorization_status="Authorised",
             last_update_date_source=datetime.date(2023, 1, 2),
+            therapeutic_area="Testing",
         ),
         EparIndex(
             epar_id="EMA/3",
             medicine_name="To be Deactivated",
             authorization_status="Authorised",
             last_update_date_source=datetime.date(2023, 1, 3),
+            therapeutic_area="Testing",
         ),
     ]
     soft_delete_settings = {
@@ -214,18 +222,21 @@ def test_delta_load_soft_delete(postgres_adapter: PostgresAdapter):
             medicine_name="Active Med A",
             authorization_status="Authorised",
             last_update_date_source=datetime.date(2023, 1, 1),
+            therapeutic_area="Testing",
         ),
         EparIndex(
             epar_id="EMA/2",
             medicine_name="Active Med B Updated", # Update this one
             authorization_status="Authorised",
             last_update_date_source=datetime.date(2023, 1, 4),
+            therapeutic_area="Testing",
         ),
         EparIndex(
             epar_id="EMA/4", # Add a new one
             medicine_name="New Med D",
             authorization_status="Authorised",
             last_update_date_source=datetime.date(2023, 1, 5),
+            therapeutic_area="Testing",
         ),
     ]
     data_iterator_2 = (
@@ -375,6 +386,7 @@ def test_cdc_delta_load_scenario(db_settings: Settings, postgres_adapter: Postgr
             "marketing_authorization_holder_raw": "Pharma Inc.",
             "last_update_date_source": datetime.date(2023, 1, 1),
             "authorization_status": "Authorised",
+            "therapeutic_area": "Testing",
         },
         {
             "product_number": "EMA/2",
@@ -382,6 +394,7 @@ def test_cdc_delta_load_scenario(db_settings: Settings, postgres_adapter: Postgr
             "marketing_authorization_holder_raw": "Pharma Inc.",
             "last_update_date_source": datetime.date(2023, 1, 2),
             "authorization_status": "Authorised",
+            "therapeutic_area": "Testing",
         },
     ]
     run1_hwm = datetime.datetime(2023, 1, 2, 12, 0, 0, tzinfo=datetime.timezone.utc)
@@ -409,6 +422,7 @@ def test_cdc_delta_load_scenario(db_settings: Settings, postgres_adapter: Postgr
             "marketing_authorization_holder_raw": "Pharma Inc.",
             "last_update_date_source": datetime.date(2023, 1, 3),
             "authorization_status": "Authorised",
+            "therapeutic_area": "Testing",
         },
         {
             "product_number": "EMA/3",
@@ -416,6 +430,7 @@ def test_cdc_delta_load_scenario(db_settings: Settings, postgres_adapter: Postgr
             "marketing_authorization_holder_raw": "Pharma Inc.",
             "last_update_date_source": datetime.date(2023, 1, 4),
             "authorization_status": "Authorised",
+            "therapeutic_area": "Testing",
         },
     ]
     run2_hwm = datetime.datetime(2023, 1, 4, 12, 0, 0, tzinfo=datetime.timezone.utc)

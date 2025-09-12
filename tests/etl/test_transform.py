@@ -20,6 +20,7 @@ def test_transform_and_validate_success():
             "marketing_authorization_holder_raw": "Pharma A",
             "authorization_status": "Authorised",
             "last_update_date_source": "2023-01-01",
+            "therapeutic_area": "Testing",
         },
         {
             "product_number": "EU/1/96/002/001",
@@ -58,6 +59,7 @@ def test_transform_and_validate_quarantines_invalid_records(caplog):
             "marketing_authorization_holder_raw": "Pharma A",
             "authorization_status": "Authorised",
             "last_update_date_source": "2023-01-01",
+            "therapeutic_area": "Testing",
         },
         {
             # Invalid because last_update_date_source is missing
@@ -65,6 +67,7 @@ def test_transform_and_validate_quarantines_invalid_records(caplog):
             "medicine_name": "TestMed B",
             "marketing_authorization_holder_raw": "Pharma B",
             "authorization_status": "Authorised",
+            "therapeutic_area": "Testing",
         },
         {
             "product_number": "EU/1/96/003/001",
@@ -72,6 +75,7 @@ def test_transform_and_validate_quarantines_invalid_records(caplog):
             "marketing_authorization_holder_raw": "Pharma C",
             "authorization_status": "Authorised",
             "last_update_date_source": "2023-01-03",
+            "therapeutic_area": "Testing",
         },
     ]
     mock_spor_client = MagicMock(spec=SporApiClient)
@@ -111,6 +115,7 @@ def test_transform_and_validate_enrichment():
             "active_substance_raw": "SubstanceX, SubstanceY",
             "authorization_status": "Authorised",
             "last_update_date_source": "2023-01-01",
+            "therapeutic_area": "Testing",
         }
     ]
     mock_org = SporOmsOrganisation(orgId="ORG-123", name="Rich Pharma Inc.")
@@ -160,6 +165,7 @@ def test_transform_handles_complex_substances():
             "active_substance_raw": "SubstanceA, SubstanceB; SubstanceC and SubstanceD",
             "authorization_status": "Authorised",
             "last_update_date_source": "2023-01-01",
+            "therapeutic_area": "Testing",
         }
     ]
     mock_substance = SporSmsSubstance(smsId="SUB-STUB", name="SubstanceStub")
