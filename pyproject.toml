@@ -55,9 +55,13 @@ pytest-mock = "^3.15.0"
 pandas = "^2.2.2"
 moto = {extras = ["s3"], version = ">=5.1.1,<6.0.0"}
 types-boto3 = ">=1.34.141,<2.0.0"
+pytest-timeout = ">=2.3.1,<3.0.0"
 
 [tool.pytest.ini_options]
-markers = ["integration"]
+markers = [
+    "integration",
+    "timeout",
+]
 
 [tool.ruff]
 line-length = 88

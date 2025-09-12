@@ -47,7 +47,10 @@ def test_run_etl_successful_flow(
     mock_storage_instance = MagicMock(spec=IStorage)
     mock_storage_factory.return_value.get_storage.return_value = mock_storage_instance
 
-    mock_raw_records_iterator = iter([{"id": 1}, {"id": 2}])
+    mock_raw_records_iterator = iter([
+        {"product_number": "EMA/1", "id": 1},
+        {"product_number": "EMA/2", "id": 2},
+    ])
     mock_extract.return_value = mock_raw_records_iterator
 
     record1 = MagicMock(spec=EparIndex)
@@ -74,9 +77,14 @@ def test_run_etl_successful_flow(
     mock_get_adapter.assert_called_once_with(settings)
     mock_adapter.connect.assert_called_once()
     mock_extract.assert_called_once()
-    mock_transform.assert_called_once_with(
-        mock_raw_records_iterator, mock_spor_client_instance, 123
-    )
+    mock_transform.assert_called_once()
+    call_args, _ = mock_transform.call_args
+    assert call_args[0] == [
+        {"product_number": "EMA/1", "id": 1},
+        {"product_number": "EMA/2", "id": 2},
+    ]
+    assert call_args[1] == mock_spor_client_instance
+    assert call_args[2] == 123
     # Check that all processing functions were called with the correct data
     assert mock_process_orgs.call_count == 2
     mock_process_orgs.assert_any_call(mock_adapter, ["org1"])
