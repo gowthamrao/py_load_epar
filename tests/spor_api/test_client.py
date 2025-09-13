@@ -4,7 +4,7 @@ import requests_mock
 
 from py_load_epar.config import SporApiSettings
 from py_load_epar.spor_api.client import SporApiClient
-from py_load_epar.spor_api.models import SporOmsOrganisation
+from py_load_epar.spor_api.models import SporOmsOrganisation, SporSmsSubstance
 
 
 @pytest.fixture
@@ -171,3 +171,133 @@ def test_search_organisation_retries_on_failure(spor_settings):
         assert mock_get.call_count == 2
         assert isinstance(result, SporOmsOrganisation)
         assert result.org_id == "ORG-RETRY"
+
+
+def test_authenticate_failure(spor_settings):
+    """
+    Test that authentication raises an exception on API error.
+    """
+    client = SporApiClient(spor_settings)
+    with requests_mock.Mocker() as m:
+        m.post(
+            f"{spor_settings.base_url}/api/Account",
+            status_code=500,
+            reason="Internal Server Error",
+        )
+        with pytest.raises(Exception):
+            client._authenticate()
+
+
+def test_search_substance_success(spor_settings):
+    """
+    Test substance search with a single, high-confidence result.
+    """
+    client = SporApiClient(spor_settings)
+    substance_name = "Test-substance"
+    api_response = {
+        "items": [{"smsId": "SUB-123", "name": substance_name}]
+    }
+
+    with requests_mock.Mocker() as m:
+        m.post(f"{spor_settings.base_url}/api/Account", json={"result": {"accessToken": "fake-token"}})
+        m.get(f"{spor_settings.base_url}/api/v1/spor/sms/substances", json=api_response)
+
+        result = client.search_substance(substance_name)
+
+        assert isinstance(result, SporSmsSubstance)
+        assert result.sms_id == "SUB-123"
+        assert substance_name in client._substance_cache
+        assert client._substance_cache[substance_name] is result
+
+
+def test_search_substance_no_match(spor_settings):
+    """
+    Test substance search with zero results.
+    """
+    client = SporApiClient(spor_settings)
+    substance_name = "Unknown Substance"
+    api_response = {"items": []}
+
+    with requests_mock.Mocker() as m:
+        m.post(f"{spor_settings.base_url}/api/Account", json={"result": {"accessToken": "fake-token"}})
+        m.get(f"{spor_settings.base_url}/api/v1/spor/sms/substances", json=api_response)
+
+        result = client.search_substance(substance_name)
+
+        assert result is None
+        assert client._substance_cache[substance_name] is None
+
+
+def test_search_substance_ambiguous_match(spor_settings):
+    """
+    Test substance search with multiple results (low-confidence).
+    """
+    client = SporApiClient(spor_settings)
+    substance_name = "Ambiguous Substance"
+    api_response = {
+        "items": [
+            {"smsId": "SUB-1", "name": "Ambiguous Substance One"},
+            {"smsId": "SUB-2", "name": "Ambiguous Substance Two"},
+        ]
+    }
+
+    with requests_mock.Mocker() as m:
+        m.post(f"{spor_settings.base_url}/api/Account", json={"result": {"accessToken": "fake-token"}})
+        m.get(f"{spor_settings.base_url}/api/v1/spor/sms/substances", json=api_response)
+
+        result = client.search_substance(substance_name)
+
+        assert result is None
+        assert client._substance_cache[substance_name] is None
+
+
+def test_search_substance_is_cached(spor_settings):
+    """
+    Test that substance search results are cached.
+    """
+    client = SporApiClient(spor_settings)
+    substance_name = "Test-substance"
+    api_response = {
+        "items": [{"smsId": "SUB-123", "name": substance_name}]
+    }
+
+    with requests_mock.Mocker() as m:
+        m.post(f"{spor_settings.base_url}/api/Account", json={"result": {"accessToken": "fake-token"}})
+        mock_get = m.get(f"{spor_settings.base_url}/api/v1/spor/sms/substances", json=api_response)
+
+        client.search_substance(substance_name)
+        client.search_substance(substance_name)
+
+        assert mock_get.call_count == 1
+
+
+def test_search_substance_retries_on_failure(spor_settings):
+    """
+    Test that the client retries the search request on transient server errors.
+    """
+    client = SporApiClient(spor_settings)
+    substance_name = "Retry Substance"
+    success_response = {
+        "items": [{"smsId": "SUB-RETRY", "name": substance_name}]
+    }
+
+    with requests_mock.Mocker() as m:
+        m.post(
+            f"{spor_settings.base_url}/api/Account",
+            json={"result": {"accessToken": "fake-token"}},
+        )
+
+        search_url = f"{spor_settings.base_url}/api/v1/spor/sms/substances"
+        mock_get = m.get(
+            search_url,
+            [
+                {"status_code": 503, "reason": "Service Unavailable"},
+                {"status_code": 200, "json": success_response},
+            ],
+        )
+
+        result = client.search_substance(substance_name)
+
+        assert mock_get.call_count == 2
+        assert isinstance(result, SporSmsSubstance)
+        assert result.sms_id == "SUB-RETRY"
