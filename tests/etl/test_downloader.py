@@ -1,11 +1,14 @@
 import hashlib
 from unittest.mock import MagicMock
+import logging
 
 import pytest
+import requests
 
 from py_load_epar.etl.downloader import (
     _download_file_to_stream,
     download_document_and_hash,
+    download_file_to_memory,
 )
 from py_load_epar.storage.interfaces import IStorage
 
@@ -46,8 +49,6 @@ def test_download_document_and_hash_with_mock_storage(requests_mock):
     assert saved_object_name == "documents/document.pdf"
 
 
-import requests
-
 
 def test_download_raises_exception_on_http_error(requests_mock):
     """Test that the downloader raises an exception for a 404 error."""
@@ -62,27 +63,38 @@ def test_download_raises_exception_on_http_error(requests_mock):
         _download_file_to_stream(url, dummy_stream)
 
 
-def test_download_retries_on_transient_error(requests_mock):
+def test_download_retries_on_transient_error(requests_mock, caplog):
     """
-    Test that the downloader retries on a 503 error and eventually succeeds.
+    Test that the public `download_file_to_memory` function retries on a 503
+    error, logs the attempts, and eventually succeeds.
     """
     url = "https://fake-ema-url.com/transient_error"
     mock_content = b"successful_content"
-    # Simulate a 503 error, then a success
+    # Simulate two 503 errors, then a success
     requests_mock.get(
         url,
         [
             {"status_code": 503, "text": "Service Unavailable"},
+            {"status_code": 503, "text": "Service Unavailable"},
             {"status_code": 200, "content": mock_content},
         ],
     )
-    from io import BytesIO
 
-    dummy_stream = BytesIO()
-    _download_file_to_stream(url, dummy_stream)
-    dummy_stream.seek(0)
-    assert dummy_stream.read() == mock_content
-    assert requests_mock.call_count == 2
+    with caplog.at_level(logging.INFO):
+        in_memory_file = download_file_to_memory(url)
+
+    # --- Assertions ---
+    # Check that the file content is correct
+    in_memory_file.seek(0)
+    assert in_memory_file.read() == mock_content
+
+    # Check that the request was made 3 times (1 initial + 2 retries)
+    assert requests_mock.call_count == 3
+
+    # Check that the retry attempts were logged
+    assert "Failed to download file from" in caplog.text
+    assert caplog.text.count("Failed to download file from") == 2
+    assert "Successfully downloaded file" in caplog.text
 
 
 def test_download_handles_timeout(requests_mock):
@@ -93,10 +105,7 @@ def test_download_handles_timeout(requests_mock):
     requests_mock.get(url, exc=requests.exceptions.Timeout)
 
     with pytest.raises(requests.exceptions.Timeout):
-        from io import BytesIO
-
-        dummy_stream = BytesIO()
-        _download_file_to_stream(url, dummy_stream)
+        download_file_to_memory(url)
 
 
 def test_download_with_no_filename_in_url(requests_mock):
