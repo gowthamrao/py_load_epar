@@ -54,18 +54,31 @@ def parse_ema_excel_file(
         if sheet is None:
             raise ValueError("Excel file contains no active sheets.")
 
-        # Read the header row and convert column names to snake_case
-        headers = [_snake_case(cell.value) for cell in sheet[1]]
+        # Get an iterator for all rows
+        rows_iterator = sheet.iter_rows(values_only=True)
+
+        # --- Get header row ---
+        try:
+            header_tuple = next(rows_iterator)
+        except StopIteration:
+            logger.warning("Excel sheet is empty. No data to parse.")
+            return # Empty sheet
+
+        # Check if header row is completely empty
+        if not any(header_tuple):
+            logger.warning("Excel sheet contains an empty header row. No data to parse.")
+            return
+
+        headers = [_snake_case(str(cell)) if cell is not None else "" for cell in header_tuple]
         logger.debug(f"Parsed Excel headers: {headers}")
 
+
         # --- Validate that all critical columns are present ---
-        # These are the raw column names expected from the source file,
-        # but snake_cased.
         required_columns = {
             "medicine_name",
             "product_number",
-            "authorization_status", # Use canonical 'z' spelling
-            "u_r_l",  # "URL" becomes "u_r_l" after snake_casing
+            "authorization_status",
+            "u_r_l",
         }
         missing_columns = required_columns - set(headers)
         if missing_columns:
@@ -73,14 +86,13 @@ def parse_ema_excel_file(
                 f"Missing critical columns from source file: {sorted(list(missing_columns))}"
             )
 
-        # Yield each subsequent row as a dictionary mapped by the headers
-        for row in sheet.iter_rows(min_row=2, values_only=True):
-            # Skip empty rows
+        # Yield each subsequent row as a dictionary
+        for row in rows_iterator:
             if not any(row):
                 continue
             yield dict(zip(headers, row))
 
-    except Exception as e:
+    except (IOError, TypeError, AttributeError) as e:
         logger.error(f"Failed to parse Excel file from {type(file_source)}. Error: {e}")
         # Re-raise the exception to be handled by the calling orchestrator
         raise

@@ -38,64 +38,54 @@ def extract_data(  # noqa: C901
     # 1. Download the file into an in-memory stream
     excel_file_stream = download_file_to_memory(url=settings.etl.epar_data_url)
 
-    # 2. Parse the stream directly
+    # 2. Parse the stream into a DataFrame for deduplication
     raw_records_iterator = parse_ema_excel_file(excel_file_stream)
+    try:
+        df = pd.DataFrame(raw_records_iterator)
+        if df.empty:
+            logger.info("Source file is empty. No records to process.")
+            return
+    except (IOError, TypeError, AttributeError):
+        logger.info("Could not create DataFrame, likely empty file. No records to process.")
+        return
+
+    # --- Handle duplicates: keep the record with the latest revision date ---
+    # Convert revision_date to datetime, coercing errors to NaT
+    df["revision_date"] = pd.to_datetime(df["revision_date"], errors="coerce")
+    # Drop rows where revision_date could not be parsed
+    df.dropna(subset=["revision_date"], inplace=True)
+    # Sort by revision date to ensure the latest is last
+    df.sort_values(by="revision_date", ascending=True, inplace=True)
+    # Drop duplicates on product number, keeping the last (most recent)
+    df.drop_duplicates(subset=["product_number"], keep="last", inplace=True)
 
     processed_count = 0
-    for record in raw_records_iterator:
+    for record in df.to_dict("records"):
         # --- Field renaming and type conversion ---
-        update_date_val = record.get("revision_date")
-        if not update_date_val:
-            continue
-
-        if isinstance(update_date_val, datetime.datetime):
-            record_date = update_date_val.date()
-        elif isinstance(update_date_val, datetime.date):
-            record_date = update_date_val
-        else:
-            try:
-                record_date = datetime.datetime.fromisoformat(
-                    str(update_date_val)
-                ).date()
-            except (ValueError, TypeError):
-                logger.warning(
-                    f"Could not parse date '{update_date_val}' for record. Skipping."
-                )
-                continue
+        record_date = record["revision_date"].date()
 
         # The Pydantic model expects 'last_update_date_source'
         record["last_update_date_source"] = record_date
 
         # Coerce 'marketing_authorisation_date' to a date object, skipping
-        # the record on failure. This ensures that malformed dates do not
-        # silently become None during Pydantic validation.
+        # the record on failure.
         auth_date_val = record.get("marketing_authorisation_date")
-        if auth_date_val:
-            if isinstance(auth_date_val, datetime.datetime):
-                record["marketing_authorisation_date"] = auth_date_val.date()
-            elif isinstance(auth_date_val, datetime.date):
-                # It's already a date, no action needed
-                pass
+        if pd.notna(auth_date_val):
+            # pd.to_datetime can handle various formats including existing datetimes
+            coerced_date = pd.to_datetime(auth_date_val, errors="coerce")
+            if pd.notna(coerced_date):
+                record["marketing_authorisation_date"] = coerced_date.date()
             else:
-                try:
-                    # Pandas sometimes reads dates as timestamps, handle that
-                    if isinstance(auth_date_val, pd.Timestamp):
-                        record["marketing_authorisation_date"] = auth_date_val.date()
-                    else:
-                        # Otherwise, attempt to parse from string
-                        record["marketing_authorisation_date"] = datetime.datetime.fromisoformat(
-                            str(auth_date_val)
-                        ).date()
-                except (ValueError, TypeError):
-                    logger.warning(
-                        f"Could not parse marketing_authorisation_date "
-                        f"'{auth_date_val}'. Skipping record."
-                    )
-                    continue
+                logger.warning(
+                    f"Could not parse marketing_authorisation_date "
+                    f"'{auth_date_val}'. Skipping record."
+                )
+                continue
+        else:
+            record["marketing_authorisation_date"] = None
 
         # Rename keys from parser output to match Pydantic model fields
-        # Handle inconsistent spelling of 'authorization'
-        if "authorisation_status" in record and "authorization_status" not in record:
+        if "authorisation_status" in record:
             record["authorization_status"] = record.pop("authorisation_status")
 
         if "marketing_authorisation_holder_company_name" in record:
@@ -109,8 +99,7 @@ def extract_data(  # noqa: C901
             )
             continue
 
-        # The 'URL' column from the sheet is snake_cased to 'u_r_l' by the parser.
-        # We map it to the 'source_url' field in our Pydantic model.
+        # The 'URL' column is snake_cased to 'u_r_l' by the parser.
         if "u_r_l" in record:
             record["source_url"] = record.pop("u_r_l")
 
