@@ -42,11 +42,15 @@ class PostgresAdapter(IDatabaseAdapter):
                     f"'{self.settings.host}:{self.settings.port}'."
                 )
             )
-            self.conn = psycopg2.connect(**conn_details)
+            self.conn = self._get_connection(**conn_details)
             self.conn.autocommit = False
         except psycopg2.OperationalError as e:
             logger.error(f"Failed to connect to PostgreSQL: {e}")
             raise
+
+    def _get_connection(self, **kwargs) -> PgConnection:
+        """Helper method to establish a psycopg2 connection."""
+        return psycopg2.connect(**kwargs)
 
     def prepare_load(self, load_strategy: str, target_table: str) -> str:
         """
