@@ -122,3 +122,60 @@ def test_delta_load_strategy(
         # Verify withdrawn record (EMA/1)
         cursor.execute("SELECT is_active FROM epar_index WHERE epar_id = 'EMA/1'")
         assert cursor.fetchone()[0] is False
+
+
+def test_delta_load_idempotency(
+    postgres_adapter: PostgresAdapter,
+    db_settings: Settings,
+    mocker,
+    initial_excel_file: Path,
+    delta_excel_file: Path,
+):
+    """
+    Tests that running a DELTA load twice with the same data results in the
+    same database state, ensuring the process is idempotent.
+    """
+    # --- Mock dependencies ---
+    mock_spor_client = mocker.patch("py_load_epar.etl.orchestrator.SporApiClient")
+    mock_spor_client.return_value.search_organisation.return_value = None
+    mock_spor_client.return_value.search_substance.return_value = None
+    mocker.patch("py_load_epar.etl.orchestrator._process_documents", return_value=0)
+    mock_download = mocker.patch("py_load_epar.etl.extract.download_file_to_memory")
+
+    # --- 1. Run FULL load ---
+    mock_download.return_value = initial_excel_file.open("rb")
+    settings = db_settings
+    settings.etl.load_strategy = "FULL"
+    run_etl(settings)
+
+    # --- 2. Run DELTA load the first time ---
+    mock_download.return_value = delta_excel_file.open("rb")
+    settings.etl.load_strategy = "DELTA"
+    run_etl(settings)
+
+    # --- 3. Capture database state ---
+    def get_db_state(adapter):
+        with adapter.conn.cursor() as cursor:
+            # Exclude the last_update_timestamp_utc and etl_execution_id columns from the comparison
+            cursor.execute("SELECT epar_id, medicine_name, authorization_status, first_authorization_date, withdrawal_date, last_update_date_source, active_substance_raw, marketing_authorization_holder_raw, therapeutic_area, mah_oms_id, is_active, source_url FROM epar_index ORDER BY epar_id")
+            data = cursor.fetchall()
+            cursor.execute("SELECT * FROM epar_substance_link ORDER BY epar_id, spor_substance_id")
+            links = cursor.fetchall()
+            return data, links
+
+    first_run_data, first_run_links = get_db_state(postgres_adapter)
+    assert len(first_run_data) == 3  # Ensure the delta load actually ran
+
+    # --- 4. Run DELTA load the second time ---
+    # The download mock will continue to return the delta file
+    # Clear the pipeline execution log to simulate a fresh run
+    with postgres_adapter.conn.cursor() as cursor:
+        cursor.execute("TRUNCATE TABLE pipeline_execution RESTART IDENTITY CASCADE")
+    postgres_adapter.conn.commit()
+    run_etl(settings)
+
+    # --- 5. Assert the state is identical ---
+    second_run_data, second_run_links = get_db_state(postgres_adapter)
+
+    assert second_run_data == first_run_data
+    assert second_run_links == first_run_links

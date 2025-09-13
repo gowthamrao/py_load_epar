@@ -4,6 +4,7 @@ import uuid
 from typing import Iterator, List, TypeVar
 from urllib.parse import urljoin
 
+import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -303,8 +304,26 @@ def run_etl(settings: Settings) -> None:
             high_water_mark = adapter.get_latest_high_water_mark()
 
         raw_records_iterator = extract_data(settings, high_water_mark)
+
+        # Materialize the iterator to a DataFrame for deduplication
+        raw_records_df = pd.DataFrame(raw_records_iterator)
+
+        if not raw_records_df.empty:
+            # Deduplicate records based on the unique identifier 'product_number'
+            # before any costly transformations.
+            initial_count = len(raw_records_df)
+            raw_records_df.drop_duplicates(
+                subset=["product_number"], keep="first", inplace=True
+            )
+            deduped_count = len(raw_records_df)
+            if initial_count > deduped_count:
+                logger.info(
+                    f"Removed {initial_count - deduped_count} duplicate records "
+                    "based on 'product_number'."
+                )
+
         enriched_models_iterator = transform_and_validate(
-            raw_records_iterator, spor_client, execution_id
+            raw_records_df.to_dict("records"), spor_client, execution_id
         )
         batches = _batch_iterator(enriched_models_iterator, settings.etl.batch_size)
 
@@ -373,6 +392,11 @@ def run_etl(settings: Settings) -> None:
             staging_table=main_staging_table,
             pydantic_model=target_model,
             primary_key_columns=["epar_id"],
+            soft_delete_settings={
+                "column": "is_active",
+                "inactive_value": False,
+                "active_value": True,
+            },
         )
 
         # 6. Process documents only if there are records with a source URL
