@@ -44,6 +44,33 @@ def test_local_storage_creates_basedir():
     base_path.rmdir()
 
 
+def test_local_storage_create_basedir_permission_error(mocker):
+    """
+    Tests that LocalStorage raises an OSError if it fails to create the base directory.
+    """
+    mock_mkdir = mocker.patch("pathlib.Path.mkdir", side_effect=OSError("Permission denied"))
+
+    with pytest.raises(OSError, match="Permission denied"):
+        LocalStorage(base_path="./permission_denied_dir")
+
+    mock_mkdir.assert_called_once()
+
+
+def test_local_storage_save_write_error(tmp_path: Path, mocker):
+    """
+    Tests that LocalStorage raises an IOError if a file write fails.
+    """
+    storage = LocalStorage(base_path=tmp_path)
+    mock_open = mocker.patch("builtins.open", side_effect=IOError("Disk full"))
+
+    with pytest.raises(IOError, match="Disk full"):
+        storage.save(io.BytesIO(b"test"), "some_file.txt")
+
+    # Check that open was called with the correct path and mode
+    expected_path = tmp_path / "some_file.txt"
+    mock_open.assert_called_once_with(expected_path, "wb")
+
+
 # --- Tests for S3Storage ---
 
 @mock_aws

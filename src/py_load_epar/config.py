@@ -84,7 +84,9 @@ class Settings(BaseSettings):
             self._load_from_yaml()
 
     def _load_from_yaml(self) -> None:
-        """Loads and merges settings from a YAML file."""
+        """
+        Loads and merges settings from a YAML file, giving precedence to environment variables.
+        """
         if not self.config_path:
             return
 
@@ -94,15 +96,21 @@ class Settings(BaseSettings):
         if not yaml_config:
             return
 
-        # Update nested settings models
+        # For each nested settings object, load the YAML config and then merge
+        # any values already set on the main settings object (from env vars).
+        # This ensures env vars take precedence over the YAML file.
         if "db" in yaml_config:
-            self.db = self.db.model_copy(update=yaml_config["db"])
+            env_values = self.db.model_dump(exclude_unset=True)
+            self.db = DatabaseSettings(**{**yaml_config["db"], **env_values})
         if "etl" in yaml_config:
-            self.etl = self.etl.model_copy(update=yaml_config["etl"])
+            env_values = self.etl.model_dump(exclude_unset=True)
+            self.etl = EtlSettings(**{**yaml_config["etl"], **env_values})
         if "spor_api" in yaml_config:
-            self.spor_api = self.spor_api.model_copy(update=yaml_config["spor_api"])
+            env_values = self.spor_api.model_dump(exclude_unset=True)
+            self.spor_api = SporApiSettings(**{**yaml_config["spor_api"], **env_values})
         if "storage" in yaml_config:
-            self.storage = self.storage.model_copy(update=yaml_config["storage"])
+            env_values = self.storage.model_dump(exclude_unset=True)
+            self.storage = StorageSettings(**{**yaml_config["storage"], **env_values})
 
     model_config = SettingsConfigDict(env_nested_delimiter="__")
 
