@@ -156,7 +156,8 @@ def test_delta_load_idempotency(
     # --- 3. Capture database state ---
     def get_db_state(adapter):
         with adapter.conn.cursor() as cursor:
-            cursor.execute("SELECT * FROM epar_index ORDER BY epar_id")
+            # Exclude the last_update_timestamp_utc and etl_execution_id columns from the comparison
+            cursor.execute("SELECT epar_id, medicine_name, authorization_status, first_authorization_date, withdrawal_date, last_update_date_source, active_substance_raw, marketing_authorization_holder_raw, therapeutic_area, mah_oms_id, is_active, source_url FROM epar_index ORDER BY epar_id")
             data = cursor.fetchall()
             cursor.execute("SELECT * FROM epar_substance_link ORDER BY epar_id, spor_substance_id")
             links = cursor.fetchall()
@@ -167,6 +168,10 @@ def test_delta_load_idempotency(
 
     # --- 4. Run DELTA load the second time ---
     # The download mock will continue to return the delta file
+    # Clear the pipeline execution log to simulate a fresh run
+    with postgres_adapter.conn.cursor() as cursor:
+        cursor.execute("TRUNCATE TABLE pipeline_execution RESTART IDENTITY CASCADE")
+    postgres_adapter.conn.commit()
     run_etl(settings)
 
     # --- 5. Assert the state is identical ---

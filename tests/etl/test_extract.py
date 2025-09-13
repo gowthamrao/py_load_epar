@@ -46,6 +46,7 @@ def test_extract_data_renames_fields_correctly():
         # Arrange: Mock the parser to return a record with the "raw" field names
         mock_parse.return_value = iter([
             {
+                "product_number": "EMA/1",
                 "revision_date": datetime.date(2024, 1, 15),
                 "marketing_authorisation_holder_company_name": "Test MAH",
                 "active_substance": "Test Substance",
@@ -83,9 +84,9 @@ def test_extract_data_filters_by_high_water_mark():
 
         # Arrange: Mock the parser to return a list of records with various dates
         mock_parse.return_value = iter([
-                {"medicine_name": "OldMed", "revision_date": datetime.date(2024, 1, 15), "active_substance": "a"},
-                {"medicine_name": "SameDayMed", "revision_date": datetime.date(2024, 2, 15), "active_substance": "b"},
-                {"medicine_name": "NewMed", "revision_date": datetime.date(2024, 2, 16), "active_substance": "c"},
+                {"product_number": "EMA/1", "medicine_name": "OldMed", "revision_date": datetime.date(2024, 1, 15), "active_substance": "a"},
+                {"product_number": "EMA/2", "medicine_name": "SameDayMed", "revision_date": datetime.date(2024, 2, 15), "active_substance": "b"},
+                {"product_number": "EMA/3", "medicine_name": "NewMed", "revision_date": datetime.date(2024, 2, 16), "active_substance": "c"},
         ])
 
         # Act: Call the function and get the list of processed records

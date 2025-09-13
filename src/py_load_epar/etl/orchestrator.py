@@ -392,6 +392,11 @@ def run_etl(settings: Settings) -> None:
             staging_table=main_staging_table,
             pydantic_model=target_model,
             primary_key_columns=["epar_id"],
+            soft_delete_settings={
+                "column": "is_active",
+                "inactive_value": False,
+                "active_value": True,
+            },
         )
 
         # 6. Process documents only if there are records with a source URL
